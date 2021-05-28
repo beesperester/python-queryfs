@@ -3,6 +3,7 @@ scratchpad*
 test*.txt
 root
 mountpoint
+*.db
 
 # macOs
 .DS_Store

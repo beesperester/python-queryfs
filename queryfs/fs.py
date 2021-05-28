@@ -3,6 +3,7 @@ from __future__ import print_function, absolute_import, division
 
 import logging
 import os
+import sqlite3
 
 from collections import UserList
 from hashlib import sha256
@@ -59,22 +60,49 @@ class Files:
 
 class Loopback(Operations):
     def __init__(self, root: str):
+        with sqlite3.connect("files.db") as connection:
+            cursor = connection.cursor()
+            files_table = cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name= ?",
+                ("files",),
+            ).fetchone()
+
+            if not files_table:
+                cursor.execute("CREATE TABLE files (name TEXT, hash TEXT)")
+
         self.root = realpath(root)
         self.rwlock = Lock()
 
-        # self.fh: List[FileHandle] = []
-        self.files_to_be_created: Files = Files()
+        self.file_handles: Files = Files()
 
     def __call__(self, op: str, path: str, *args: Any) -> Any:  # type: ignore
         # catch every function call and modify path parameter
         return super().__call__(op, self.root + path, *args)
 
+    # filesystem methods
+
     def access(self, path: str, amode: int) -> None:
         if not os.access(path, amode):
             raise FuseOSError(EACCES)
 
+    def readdir(
+        self, path: str, fh: int
+    ) -> Union[List[str], List[Tuple[str, Dict[str, int], int]]]:
+        rows = []
+
+        with sqlite3.connect("files.db") as connection:
+            cursor = connection.cursor()
+            rows = cursor.execute("SELECT name FROM files").fetchall()
+
+        return [".", ".."] + [x[0] for x in rows]
+
+    mkdir = os.mkdir
+    rmdir = os.rmdir
+    mknod = os.mknod
     chmod = os.chmod
     chown = os.chown
+
+    # file methods
 
     def create(self, path: str, mode: int, fi: Optional[bool] = None) -> int:
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -85,9 +113,94 @@ class Loopback(Operations):
 
         file.lifecycle.append(File.LIFECYCLE_CREATE)
 
-        self.files_to_be_created.append(file)
+        self.file_handles.append(file)
 
         return fh
+
+    def open(self, path: str, flags: int) -> int:
+        print("open", path)
+        # flags = os.O_RDWR | flags
+        fh = os.open(path, flags)
+
+        basename = os.path.basename(path)
+
+        if basename in self.file_handles:
+            # update fh
+            file = self.file_handles[basename]
+
+            file.fh = fh
+        else:
+            file = File(fh, basename)
+
+            self.file_handles.append(file)
+
+        if not File.LIFECYCLE_OPEN in file.lifecycle:
+            file.lifecycle.append(File.LIFECYCLE_OPEN)
+
+        return fh
+
+    def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
+        file = self.file_handles[fh]
+
+        if not File.LIFECYCLE_READ in file.lifecycle:
+            file.lifecycle.append(File.LIFECYCLE_READ)
+
+        with self.rwlock:
+            os.lseek(fh, offset, 0)
+            return os.read(fh, size)
+
+    def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
+        file = self.file_handles[fh]
+
+        if not File.LIFECYCLE_WRITE in file.lifecycle:
+            file.lifecycle.append(File.LIFECYCLE_WRITE)
+
+        with self.rwlock:
+            os.lseek(fh, offset, 0)
+
+            return os.write(fh, data)
+
+    def release(self, path: str, fh: int) -> None:
+        os.close(fh)
+
+        if fh in self.file_handles:
+            file = self.file_handles[fh]
+
+            if file.name.startswith("."):
+                return
+
+            print(file.lifecycle)
+
+            if file.lifecycle and file.lifecycle[-1] == File.LIFECYCLE_WRITE:
+                sha256_hash = sha256()
+
+                with open(os.path.join(self.root, file.name), "rb") as f:
+                    for byte_block in iter(lambda: f.read(4096), b""):
+                        sha256_hash.update(byte_block)
+
+                hash_string = sha256_hash.hexdigest()
+
+                with sqlite3.connect("files.db") as connection:
+                    cursor = connection.cursor()
+
+                    previous = cursor.execute(
+                        "SELECT name FROM files WHERE name = ?", (file.name,)
+                    ).fetchone()
+
+                    if previous:
+                        cursor.execute(
+                            "UPDATE files SET hash = ? WHERE name = ?",
+                            (
+                                hash_string,
+                                file.name,
+                            ),
+                        )
+                    else:
+                        cursor.execute(
+                            f"INSERT INTO files VALUES ('{file.name}', '{hash_string}')"
+                        )
+
+                self.file_handles.remove(file)
 
     def flush(self, path: str, fh: int) -> None:
         return os.fsync(fh)
@@ -114,79 +227,11 @@ class Loopback(Operations):
             )
         )
 
-    getxattr = None  # type: ignore
-
     def link(self, target: str, source: str) -> None:
         return os.link(self.root + source, target)
 
-    listxattr = None  # type: ignore
-    mkdir = os.mkdir
-    mknod = os.mknod
-
-    def open(self, path: str, flags: int) -> int:
-        # flags = os.O_RDWR | flags
-
-        fh = os.open(path, flags)
-
-        basename = os.path.basename(path)
-
-        if basename in self.files_to_be_created:
-            # update fh
-            file = self.files_to_be_created[basename]
-
-            file.fh = fh
-        else:
-            file = File(fh, basename)
-
-            self.files_to_be_created.append(file)
-
-        if not File.LIFECYCLE_OPEN in file.lifecycle:
-            file.lifecycle.append(File.LIFECYCLE_OPEN)
-
-        return fh
-
-    def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
-        file = self.files_to_be_created[fh]
-
-        if not File.LIFECYCLE_READ in file.lifecycle:
-            file.lifecycle.append(File.LIFECYCLE_READ)
-
-        with self.rwlock:
-            os.lseek(fh, offset, 0)
-            return os.read(fh, size)
-
-    def readdir(
-        self, path: str, fh: int
-    ) -> Union[List[str], List[Tuple[str, Dict[str, int], int]]]:
-        return [".", ".."] + os.listdir(path)
-
-    readlink = os.readlink
-
-    def release(self, path: str, fh: int) -> None:
-        os.close(fh)
-
-        file = self.files_to_be_created[fh]
-
-        if file.name.startswith("._"):
-            return
-
-        print(file.lifecycle)
-
-        if file.lifecycle and file.lifecycle[-1] == File.LIFECYCLE_WRITE:
-            sha256_hash = sha256()
-
-            with open(os.path.join(self.root, file.name), "rb") as f:
-                for byte_block in iter(lambda: f.read(4096), b""):
-                    sha256_hash.update(byte_block)
-
-            print("checksum", sha256_hash.hexdigest())
-
-            self.files_to_be_created.remove(file)
-
     def rename(self, old: str, new: str) -> None:
         return os.rename(old, self.root + new)
-
-    rmdir = os.rmdir
 
     def statfs(self, path: str):
         stv = os.statvfs(path)
@@ -214,20 +259,8 @@ class Loopback(Operations):
             f.truncate(length)
 
     unlink = os.unlink
+    readlink = os.readlink
     utimens = os.utime
-
-    def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
-        print(len(data), offset, fh)
-
-        file = self.files_to_be_created[fh]
-
-        if not File.LIFECYCLE_WRITE in file.lifecycle:
-            file.lifecycle.append(File.LIFECYCLE_WRITE)
-
-        with self.rwlock:
-            os.lseek(fh, offset, 0)
-
-            return os.write(fh, data)
 
 
 if __name__ == "__main__":
@@ -240,5 +273,8 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.WARNING)
     fuse = FUSE(
-        Loopback(args.root), args.mount, foreground=True, allow_other=True
+        Loopback(args.root),
+        args.mount,
+        foreground=True,
+        allow_other=True,
     )
