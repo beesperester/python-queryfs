@@ -3,6 +3,7 @@ from __future__ import print_function, absolute_import, division
 
 import logging
 import os
+from posixpath import basename
 import sqlite3
 
 from collections import UserList
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fuse import FUSE, FuseOSError, Operations
+from queryfs import db
 
 
 class File:
@@ -59,21 +61,24 @@ class Files:
 
 
 class Loopback(Operations):
-    def __init__(self, root: str):
-        with sqlite3.connect("files.db") as connection:
-            cursor = connection.cursor()
-            files_table = cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name= ?",
-                ("files",),
-            ).fetchone()
+    def __init__(self, root: str, db_name: str):
+        self.db_name = db_name
 
-            if not files_table:
-                cursor.execute("CREATE TABLE files (name TEXT, hash TEXT)")
+        db.init(db_name)
 
         self.root = realpath(root)
         self.rwlock = Lock()
 
-        self.file_handles: Files = Files()
+        self.blobs = Path(self.root).joinpath("blobs")
+        self.temp = Path(self.root).joinpath("temp")
+
+        if not self.blobs.is_dir():
+            os.makedirs(self.blobs, mode=0o777)
+
+        if not self.temp.is_dir():
+            os.makedirs(self.temp, mode=0o777)
+
+        # self.file_handles: Files = Files()
 
     def __call__(self, op: str, path: str, *args: Any) -> Any:  # type: ignore
         # catch every function call and modify path parameter
@@ -82,19 +87,20 @@ class Loopback(Operations):
     # filesystem methods
 
     def access(self, path: str, amode: int) -> None:
+        file_basename = os.path.basename(path)
+
+        result = db.get_file_by_name(self.db_name, file_basename)
+
+        if result:
+            return
+
         if not os.access(path, amode):
             raise FuseOSError(EACCES)
 
     def readdir(
         self, path: str, fh: int
     ) -> Union[List[str], List[Tuple[str, Dict[str, int], int]]]:
-        rows = []
-
-        with sqlite3.connect("files.db") as connection:
-            cursor = connection.cursor()
-            rows = cursor.execute("SELECT name FROM files").fetchall()
-
-        return [".", ".."] + [x[0] for x in rows]
+        return [".", ".."] + [x.name for x in db.readdir(self.db_name)]
 
     mkdir = os.mkdir
     rmdir = os.rmdir
@@ -105,56 +111,59 @@ class Loopback(Operations):
     # file methods
 
     def create(self, path: str, mode: int, fi: Optional[bool] = None) -> int:
+        file_basename = os.path.basename(path)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
 
-        fh = os.open(path, flags, mode)
+        temp_path = self.temp.joinpath(file_basename)
 
-        file = File(fh, os.path.basename(path))
+        fh = os.open(temp_path, flags, mode)
 
-        file.lifecycle.append(File.LIFECYCLE_CREATE)
+        db.create(self.db_name, file_basename, fh)
 
-        self.file_handles.append(file)
+        print("create", file_basename, fh)
 
         return fh
 
     def open(self, path: str, flags: int) -> int:
-        print("open", path)
-        # flags = os.O_RDWR | flags
+        file_basename = os.path.basename(path)
+
+        file = db.get_file_by_name(self.db_name, file_basename)
+
+        if file:
+            if flags == 0:
+                # read only
+                path = str(self.blobs.joinpath(file.hash))
+                path = str(self.temp.joinpath(file_basename))
+                open(path, "wb")
+                print("path to read only file", path)
+            else:
+                # write
+                path = str(self.temp.joinpath(file_basename))
+
+                open(path, "wb")
+
+                print("path to empty temp file", path)
+        else:
+            path = str(self.temp.joinpath(file_basename))
+
+            print("path to existing temp file", path)
+
         fh = os.open(path, flags)
 
-        basename = os.path.basename(path)
+        if file and flags > 0:
+            # lock file with filehandle in DB
+            db.lock(self.db_name, file.id, fh)
 
-        if basename in self.file_handles:
-            # update fh
-            file = self.file_handles[basename]
-
-            file.fh = fh
-        else:
-            file = File(fh, basename)
-
-            self.file_handles.append(file)
-
-        if not File.LIFECYCLE_OPEN in file.lifecycle:
-            file.lifecycle.append(File.LIFECYCLE_OPEN)
+        print(f"open ({flags})", file_basename, fh)
 
         return fh
 
     def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
-        file = self.file_handles[fh]
-
-        if not File.LIFECYCLE_READ in file.lifecycle:
-            file.lifecycle.append(File.LIFECYCLE_READ)
-
         with self.rwlock:
             os.lseek(fh, offset, 0)
             return os.read(fh, size)
 
     def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
-        file = self.file_handles[fh]
-
-        if not File.LIFECYCLE_WRITE in file.lifecycle:
-            file.lifecycle.append(File.LIFECYCLE_WRITE)
-
         with self.rwlock:
             os.lseek(fh, offset, 0)
 
@@ -163,44 +172,29 @@ class Loopback(Operations):
     def release(self, path: str, fh: int) -> None:
         os.close(fh)
 
-        if fh in self.file_handles:
-            file = self.file_handles[fh]
+        file = db.get_file_by_lock(self.db_name, fh)
 
-            if file.name.startswith("."):
-                return
+        if file:
+            print("release", file.name, fh)
 
-            print(file.lifecycle)
+        if file and file.lock > 0:
+            sha256_hash = sha256()
 
-            if file.lifecycle and file.lifecycle[-1] == File.LIFECYCLE_WRITE:
-                sha256_hash = sha256()
+            file_path = self.temp.joinpath(file.name)
 
-                with open(os.path.join(self.root, file.name), "rb") as f:
-                    for byte_block in iter(lambda: f.read(4096), b""):
-                        sha256_hash.update(byte_block)
+            with open(file_path, "rb") as f:
+                for byte_block in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(byte_block)
 
-                hash_string = sha256_hash.hexdigest()
+            hash = sha256_hash.hexdigest()
 
-                with sqlite3.connect("files.db") as connection:
-                    cursor = connection.cursor()
+            # update hash
+            db.release(self.db_name, file.name, hash)
 
-                    previous = cursor.execute(
-                        "SELECT name FROM files WHERE name = ?", (file.name,)
-                    ).fetchone()
+            blob_file = self.blobs.joinpath(hash)
 
-                    if previous:
-                        cursor.execute(
-                            "UPDATE files SET hash = ? WHERE name = ?",
-                            (
-                                hash_string,
-                                file.name,
-                            ),
-                        )
-                    else:
-                        cursor.execute(
-                            f"INSERT INTO files VALUES ('{file.name}', '{hash_string}')"
-                        )
-
-                self.file_handles.remove(file)
+            if not blob_file.is_file():
+                os.rename(file_path, blob_file)
 
     def flush(self, path: str, fh: int) -> None:
         return os.fsync(fh)
@@ -212,6 +206,15 @@ class Loopback(Operations):
         return os.fsync(fh)
 
     def getattr(self, path: str, fh: Optional[int] = None) -> Dict[str, int]:
+        file_basename = os.path.basename(path)
+
+        file = db.get_file_by_name(self.db_name, file_basename)
+
+        if file:
+            path = str(self.blobs.joinpath(file.hash))
+        else:
+            path = str(self.temp.joinpath(file_basename))
+
         st = os.lstat(path)
         return dict(
             (key, getattr(st, key))
@@ -234,6 +237,15 @@ class Loopback(Operations):
         return os.rename(old, self.root + new)
 
     def statfs(self, path: str):
+        file_basename = os.path.basename(path)
+
+        file = db.get_file_by_name(self.db_name, file_basename)
+
+        if file:
+            path = str(self.blobs.joinpath(file.hash))
+        else:
+            path = str(self.temp.joinpath(file_basename))
+
         stv = os.statvfs(path)
         return dict(
             (key, getattr(stv, key))
@@ -273,7 +285,7 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.WARNING)
     fuse = FUSE(
-        Loopback(args.root),
+        Loopback(args.root, "files.db"),
         args.mount,
         foreground=True,
         allow_other=True,
