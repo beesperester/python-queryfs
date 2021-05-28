@@ -17,42 +17,19 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from fuse import FUSE, FuseOSError, Operations
 
 
-class FileHandle:
-    def __init__(self, fh: int, name: str, flags: int) -> None:
-        self.fh = fh
-        self.name = name
-        self.flags = flags
-
-    @property
-    def is_readable(self) -> bool:
-        return self.flags == 0
-
-    @property
-    def is_writable(self) -> bool:
-        return self.flags > 0
-
-    @property
-    def is_readable_writable(self) -> bool:
-        return self.flags > 1
-
-    def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} fh='{self.fh}' name='{self.name}' flags='{self.flags}' at {hex(id(self))}>"
-
-
 class File:
-    STATE_CLOSED = 0
-    STATE_OPENED = 1
-    STATE_READ = 2
-    STATE_WRITTEN = 3
-    STATE_CREATED = 4
+    LIFECYCLE_OPEN = "open"
+    LIFECYCLE_CREATE = "create"
+    LIFECYCLE_WRITE = "write"
+    LIFECYCLE_READ = "read"
 
     def __init__(self, fh: int, name: str) -> None:
         self.fh = fh
         self.name = name
-        self.state = File.STATE_CLOSED
+        self.lifecycle: List[str] = []
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} fh='{self.fh}' name='{self.name}' at {hex(id(self))}>"
+        return f"<{self.__class__.__name__} fh='{self.fh}' name='{self.name}' lifecycle='{self.lifecycle}' at {hex(id(self))}>"
 
 
 class Files:
@@ -106,15 +83,9 @@ class Loopback(Operations):
 
         file = File(fh, os.path.basename(path))
 
-        file.state = File.STATE_CREATED
+        file.lifecycle.append(File.LIFECYCLE_CREATE)
 
         self.files_to_be_created.append(file)
-
-        # file_handle = FileHandle(fh, os.path.basename(path), flags)
-
-        # self.fh.append(file_handle)
-
-        # print("create", file_handle)
 
         return fh
 
@@ -163,25 +134,23 @@ class Loopback(Operations):
             # update fh
             file = self.files_to_be_created[basename]
 
-            print("update", file)
-
-            file.state = File.STATE_OPENED
-
             file.fh = fh
         else:
             file = File(fh, basename)
 
             self.files_to_be_created.append(file)
 
-        # file_handle = FileHandle(fh, os.path.basename(path), flags)
-
-        # self.fh.append(file_handle)
-
-        # print("open", file_handle)
+        if not File.LIFECYCLE_OPEN in file.lifecycle:
+            file.lifecycle.append(File.LIFECYCLE_OPEN)
 
         return fh
 
     def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
+        file = self.files_to_be_created[fh]
+
+        if not File.LIFECYCLE_READ in file.lifecycle:
+            file.lifecycle.append(File.LIFECYCLE_READ)
+
         with self.rwlock:
             os.lseek(fh, offset, 0)
             return os.read(fh, size)
@@ -193,48 +162,26 @@ class Loopback(Operations):
 
     readlink = os.readlink
 
-    def release(self, path: str, fh: int):
-        # if fh in self.fh_open:
-        #     print("release", fh)
-
-        # print("release", fh, self.fh[fh])
-
-        # sha256_hash = sha256()
-
-        # os.lseek(fh, 0, 0)
-        # for data in iter(lambda: os.read(fh, 1024), b""):
-        #     sha256_hash.update(data)
-
-        # print(sha256_hash.hexdigest())
-
-        # fh_index = [x.fh for x in self.fh].index(fh)
-
-        # file_handle = self.fh[fh_index]
-
-        # # if file_handle.is_writable:
-        # print("release", file_handle)
-
+    def release(self, path: str, fh: int) -> None:
         os.close(fh)
 
-        if fh in self.files_to_be_created:
-            file = self.files_to_be_created[fh]
+        file = self.files_to_be_created[fh]
 
-            if file.state == File.STATE_WRITTEN:
-                print("release", file)
+        if file.name.startswith("._"):
+            return
 
-                sha256_hash = sha256()
+        print(file.lifecycle)
 
-                with open(os.path.join(self.root, file.name), "rb") as f:
-                    for byte_block in iter(lambda: f.read(4096), b""):
-                        sha256_hash.update(byte_block)
+        if file.lifecycle and file.lifecycle[-1] == File.LIFECYCLE_WRITE:
+            sha256_hash = sha256()
 
-                print("checksum", sha256_hash.hexdigest())
+            with open(os.path.join(self.root, file.name), "rb") as f:
+                for byte_block in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(byte_block)
 
-                self.files_to_be_created.remove(file)
-        #     else:
-        #         print("do not release yet", file)
-        # else:
-        #     print("unable to find fh", fh)
+            print("checksum", sha256_hash.hexdigest())
+
+            self.files_to_be_created.remove(file)
 
     def rename(self, old: str, new: str) -> None:
         return os.rename(old, self.root + new)
@@ -272,10 +219,10 @@ class Loopback(Operations):
     def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
         print(len(data), offset, fh)
 
-        if fh in self.files_to_be_created:
-            file = self.files_to_be_created[fh]
+        file = self.files_to_be_created[fh]
 
-            file.state = File.STATE_WRITTEN
+        if not File.LIFECYCLE_WRITE in file.lifecycle:
+            file.lifecycle.append(File.LIFECYCLE_WRITE)
 
         with self.rwlock:
             os.lseek(fh, offset, 0)
