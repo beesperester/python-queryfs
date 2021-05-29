@@ -16,7 +16,7 @@ from queryfs.hashing import hash_from_file
 logger = logging.getLogger("fs")
 
 
-class FuseFiles(object):
+class Files(object):
     def __init__(self, repository: PathLike) -> None:
         self.repository = Path(repository)
         self.db_name = self.repository.joinpath("queryfs.db")
@@ -262,14 +262,14 @@ class FuseFiles(object):
         #     self.db_name, name=target_file_name, hash=source_file_instance.hash
         # )
 
-        raise NotImplementedError()
+        raise NotImplementedError("symlink")
 
     def readlink(self, path: PathLike) -> AnyStr:
         logger.info(
-            format_log_entry(self.__class__.__name__, "symlink", path=path)
+            format_log_entry(self.__class__.__name__, "readlink", path=path)
         )
 
-        raise NotImplementedError()
+        raise NotImplementedError("readlink")
 
         # file_name = os.path.basename(path)
 
@@ -306,6 +306,8 @@ class FuseFiles(object):
                 self.__class__.__name__, "truncate", length=length, fh=fh
             )
         )
+
+        raise NotImplementedError("truncate")
 
     def utimens(
         self, path: PathLike, times: Tuple[float, float] = ...
