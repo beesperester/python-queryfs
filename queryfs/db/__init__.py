@@ -8,6 +8,7 @@ from contextlib import closing
 from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Iterable, List, Any, Optional, Type, TypeVar, Union
+from queryfs import PathLike
 
 T = TypeVar("T", bound="Schema")
 
@@ -101,7 +102,7 @@ class Schema:
                 setattr(self, self.get_field_names()[index], arg)
 
 
-def create_table(db_name: Union[str, Path], model: Type[T]) -> None:
+def create_table(db_name: PathLike, model: Type[T]) -> None:
     with sqlite3.connect(db_name) as connection:
         with closing(connection.cursor()) as cursor:
             query = (model.create_schema_exists_query(), [model.table_name])
@@ -120,7 +121,7 @@ def create_table(db_name: Union[str, Path], model: Type[T]) -> None:
                 cursor.execute(query)
 
 
-def insert(db_name: Union[str, Path], schema: Type[T], **kwargs: Any) -> T:
+def insert(db_name: PathLike, schema: Type[T], **kwargs: Any) -> T:
     with sqlite3.connect(db_name) as connection:
         with closing(connection.cursor()) as cursor:
             data = OrderedDict(
@@ -146,7 +147,7 @@ def insert(db_name: Union[str, Path], schema: Type[T], **kwargs: Any) -> T:
 
 
 def fetch_by(
-    db_name: Union[str, Path], schema: Type[T], **kwargs: Any
+    db_name: PathLike, schema: Type[T], **kwargs: Any
 ) -> sqlite3.Cursor:
     with sqlite3.connect(db_name) as connection:
         # with closing(connection.cursor()) as cursor:
@@ -170,9 +171,7 @@ def fetch_by(
         return cursor.execute(*query)
 
 
-def fetch_one_by(
-    db_name: Union[str, Path], schema: Type[T], **kwargs: Any
-) -> T:
+def fetch_one_by(db_name: PathLike, schema: Type[T], **kwargs: Any) -> T:
     cursor = fetch_by(db_name, schema, **kwargs)
 
     result = cursor.fetchone()
@@ -191,12 +190,12 @@ def fetch_one_by(
     raise NotFoundException()
 
 
-def fetch_one_by_id(db_name: Union[str, Path], schema: Type[T], id: int) -> T:
+def fetch_one_by_id(db_name: PathLike, schema: Type[T], id: int) -> T:
     return fetch_one_by(db_name, schema, id=id)
 
 
 def fetch_many_by(
-    db_name: Union[str, Path], schema: Type[T], **kwargs: Any
+    db_name: PathLike, schema: Type[T], **kwargs: Any
 ) -> List[T]:
     cursor = fetch_by(db_name, schema, **kwargs)
 
@@ -216,13 +215,11 @@ def fetch_many_by(
     return items
 
 
-def fetch_all(db_name: Union[str, Path], schema: Type[T]) -> List[T]:
+def fetch_all(db_name: PathLike, schema: Type[T]) -> List[T]:
     return fetch_many_by(db_name, schema)
 
 
-def update(
-    db_name: Union[str, Path], schema: Type[T], id: int, **kwargs: Any
-) -> T:
+def update(db_name: PathLike, schema: Type[T], id: int, **kwargs: Any) -> T:
     with sqlite3.connect(db_name) as connection:
         with closing(connection.cursor()) as cursor:
             data = OrderedDict(
@@ -245,7 +242,7 @@ def update(
     return fetch_one_by_id(db_name, schema, id)
 
 
-def delete(db_name: Union[str, Path], schema: Type[T], id: int) -> None:
+def delete(db_name: PathLike, schema: Type[T], id: int) -> None:
     with sqlite3.connect(db_name) as connection:
         with closing(connection.cursor()) as cursor:
             query = (schema.create_delete_query(), [id])

@@ -1,8 +1,8 @@
 from os import PathLike
-from typing import Dict, List, Any, Optional, Union
+from typing import List, Any, Tuple
 from pathlib import Path
 from collections import OrderedDict
-from queryfs import db
+from queryfs import db, PathLike
 
 
 class File(db.Schema):
@@ -13,6 +13,8 @@ class File(db.Schema):
             "name": "text",
             "hash": "text",
             "fh": "integer",
+            "atime": "integer",
+            "mtime": "integer",
         }
     )
 
@@ -21,49 +23,39 @@ class File(db.Schema):
     hash: str
     text: str
     fh: int
+    atime: int
+    mtime: int
 
 
-def fetch_one_by_name(db_name: Union[str, Path], name: str) -> File:
+def insert(db_name: PathLike, **kwargs: Any) -> File:
+    return db.insert(db_name, File, **kwargs)
+
+
+def fetch_one_by_name(db_name: PathLike, name: str) -> File:
     return db.fetch_one_by(db_name, File, name=name)
 
 
-def update_fh(db_name: Union[str, Path], file: File, fh: int) -> File:
-    return db.update(db_name, File, file.id, fh=fh)
+def fetch_many_by_hash(db_name: PathLike, hash: str) -> List[File]:
+    return db.fetch_many_by(db_name, File, hash=hash)
 
 
-def update_hash(db_name: Union[str, Path], file: File, hash: str) -> File:
-    return db.update(db_name, File, file.id, hash=hash)
-
-
-def fetch_one_by_fh(db_name: Union[str, Path], fh: int) -> File:
+def fetch_one_by_fh(db_name: PathLike, fh: int) -> File:
     return db.fetch_one_by(db_name, File, fh=fh)
 
 
-if __name__ == "__main__":
-    import os
-    import logging
+def update_fh(db_name: PathLike, file: File, fh: int) -> File:
+    return db.update(db_name, File, file.id, fh=fh)
 
-    logging.basicConfig(level=logging.DEBUG)
 
-    if os.path.isfile("test.db"):
-        os.unlink("test.db")
+def update_hash(db_name: PathLike, file: File, hash: str) -> File:
+    return db.update(db_name, File, file.id, hash=hash)
 
-    db.create_table("test.db", File)
 
-    file = db.insert("test.db", File, name="foobar.txt")
+def update_utimens(
+    db_name: PathLike, file: File, times: Tuple[int, int]
+) -> File:
+    return db.update(db_name, File, file.id, atime=times[0], mtime=times[1])
 
-    file = update_fh("test.db", file, 5)
 
-    print(fetch_one_by_fh("test.db", 5))
-
-    # print(file)
-
-    # files = db.fetch_all("test.db", File)
-
-    # print(files)
-
-    # db.update("test.db", File, 1, hash="asdf")
-
-    # db.delete("test.db", File, 1)
-
-    # db.fetch_all("test.db", File)
+def delete(db_name: PathLike, file: File) -> None:
+    return db.delete(db_name, File, file.id)

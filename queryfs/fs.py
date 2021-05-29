@@ -1,27 +1,68 @@
 import os
 import logging
 
-from hashlib import sha256
-from typing import Any, Optional, Union, Dict, List
+from typing import AnyStr, Optional, Any, Dict, Tuple
 from pathlib import Path
 from threading import Lock
-from queryfs import db
+from queryfs import db, PathLike
 from queryfs.db import file
 from queryfs.db.file import File
+from queryfs.logging import format_log_entry
+from queryfs.hashing import hash_from_file
 
 
 logger = logging.getLogger("fs")
 
 
-class QueryFS:
-    def __init__(self, db_name: Union[str, Path]) -> None:
-        self.db_name = db_name
+class FuseFiles(object):
+    def __init__(self, repository: PathLike) -> None:
+        self.repository = Path(repository)
+        self.db_name = self.repository.joinpath("queryfs.db")
+        self.temp = self.repository.joinpath("temp")
+        self.blobs = self.repository.joinpath("blobs")
+
+        # create directories
+        directories = [self.temp, self.blobs]
+
+        for directory in directories:
+            if not directory.is_dir():
+                os.makedirs(directory, exist_ok=True)
 
         # create tables
         db.create_table(self.db_name, File)
 
+    def __call__(self, op: str, path: str, *args: Any) -> Any:
+
+        return super().__call__(op, path, *args)  # type: ignore
+
+    def getattr(self, path: str, fh: Optional[int] = None) -> Dict[str, int]:
+        logger.info(
+            format_log_entry(
+                self.__class__.__name__, "getattr", path=path, fh=fh
+            )
+        )
+
+        file_name = os.path.basename(path)
+
+        file_instance = file.fetch_one_by_name(self.db_name, file_name)
+
+        st = os.lstat(self.blobs.joinpath(file_instance.hash))
+        return dict(
+            (key, getattr(st, key))
+            for key in (
+                "st_atime",
+                "st_ctime",
+                "st_gid",
+                "st_mode",
+                "st_mtime",
+                "st_nlink",
+                "st_size",
+                "st_uid",
+            )
+        )
+
     def create(
-        self, path: Union[str, Path], mode: int, fi: Optional[bool] = None
+        self, path: PathLike, mode: int, fi: Optional[bool] = None
     ) -> int:
         logger.info(
             format_log_entry(
@@ -32,13 +73,13 @@ class QueryFS:
         file_name = os.path.basename(path)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
 
-        fh = os.open(path, flags, mode)
+        fh = os.open(self.temp.joinpath(file_name), flags, mode)
 
-        db.insert(self.db_name, File, name=file_name, fh=fh)
+        file.insert(self.db_name, name=file_name, fh=fh)
 
         return fh
 
-    def open(self, path: Union[str, Path], flags: int) -> int:
+    def open(self, path: PathLike, flags: int) -> int:
         logger.info(
             format_log_entry(
                 self.__class__.__name__, "open", path=path, flags=flags
@@ -47,18 +88,20 @@ class QueryFS:
 
         file_name = os.path.basename(path)
 
-        fh = os.open(path, flags)
-
         file_instance = file.fetch_one_by_name(self.db_name, file_name)
 
         if flags > 0:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+
+            fh = os.open(self.temp.joinpath(file_name), flags, 0o511)
+
             file.update_fh(self.db_name, file_instance, fh)
+        else:
+            fh = os.open(self.blobs.joinpath(file_instance.hash), flags)
 
         return fh
 
-    def read(
-        self, path: Union[str, Path], size: int, offset: int, fh: int
-    ) -> bytes:
+    def read(self, path: PathLike, size: int, offset: int, fh: int) -> bytes:
         logger.info(
             format_log_entry(
                 self.__class__.__name__,
@@ -75,9 +118,7 @@ class QueryFS:
 
             return os.read(fh, size)
 
-    def write(
-        self, path: Union[str, Path], data: bytes, offset: int, fh: int
-    ) -> int:
+    def write(self, path: PathLike, data: bytes, offset: int, fh: int) -> int:
         logger.info(
             format_log_entry(
                 self.__class__.__name__,
@@ -93,7 +134,7 @@ class QueryFS:
 
             return os.write(fh, data)
 
-    def release(self, path: Union[str, Path], fh: int) -> None:
+    def release(self, path: PathLike, fh: int) -> None:
         logger.info(
             format_log_entry(
                 self.__class__.__name__,
@@ -105,23 +146,21 @@ class QueryFS:
 
         os.close(fh)
 
+        file_name = os.path.basename(path)
+
         try:
             file_instance = file.fetch_one_by_fh(self.db_name, fh)
 
-            base_path = Path("/Users/bernhardesperester/git/python-queryfs")
+            previous_hash = file_instance.hash
 
-            file_path = base_path.joinpath(file_instance.name)
+            temp_path = self.temp.joinpath(file_name)
 
-            sha256_hash = sha256()
-
-            with open(file_path, "rb") as f:
-                for byte_block in iter(lambda: f.read(4096), b""):
-                    sha256_hash.update(byte_block)
-
-            hash = sha256_hash.hexdigest()
+            # create hash from file
+            hash = hash_from_file(temp_path)
 
             file.update_hash(self.db_name, file_instance, hash)
 
+            # release file handle
             file.update_fh(self.db_name, file_instance, 0)
 
             logger.info(
@@ -131,61 +170,132 @@ class QueryFS:
                     hash=hash,
                 )
             )
+
+            # move temp file to blobs if not exist
+            blob_path = self.blobs.joinpath(hash)
+
+            if not blob_path.is_file():
+                os.rename(temp_path, blob_path)
+
+            # remove headless blobs
+            pointers = file.fetch_many_by_hash(self.db_name, previous_hash)
+
+            if not pointers:
+                previous_blob_path = self.blobs.joinpath(previous_hash)
+
+                if previous_blob_path.is_file():
+                    os.unlink(previous_blob_path)
+
         except db.NotFoundException:
             pass
 
-
-def format_log_entry(*args: Any, **kwargs: Any) -> str:
-    result = ""
-
-    if args:
-        result = "\t".join(args)
-
-    if kwargs:
-        result += (
-            ":"
-            + "\t"
-            + " ".join([f"{key}='{value}'" for key, value in kwargs.items()])
+    def flush(self, path: PathLike, fh: int) -> None:
+        logger.info(
+            format_log_entry(
+                self.__class__.__name__, "flush", path=path, fh=fh
+            )
         )
 
-    return result
+        return os.fsync(fh)
 
+    def fsync(self, path: PathLike, datasync: int, fh: int) -> None:
+        logger.info(
+            format_log_entry(
+                self.__class__.__name__,
+                "fsync",
+                path=path,
+                datasync=datasync,
+                fh=fh,
+            )
+        )
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    logging.getLogger("db").setLevel(logging.WARNING)
-    logging.getLogger("dbfs").setLevel(logging.WARNING)
+        if datasync != 0 and hasattr(os, "fdatasync"):
+            return os.fdatasync(fh)  # type: ignore
 
-    base_path = Path("/Users/bernhardesperester/git/python-queryfs")
+        return os.fsync(fh)
 
-    db_path = base_path.joinpath("test.db")
+    def symlink(self, target: PathLike, source: PathLike) -> None:
+        logger.info(
+            format_log_entry(
+                self.__class__.__name__,
+                "symlink",
+                target=target,
+                source=source,
+            )
+        )
 
-    if db_path.is_file():
-        os.unlink(db_path)
+        # TODO modify File schema to support symlinks
 
-    test_file_path = base_path.joinpath("test.txt")
+        # target_file_name = os.path.basename(target)
+        # source_file_name = os.path.basename(source)
 
-    if test_file_path.is_file():
-        os.unlink(test_file_path)
+        # source_file_instance = file.fetch_one_by_name(
+        #     self.db_name, source_file_name
+        # )
 
-    query_fs = QueryFS(db_path)
+        # # insert new pointer to same hash
+        # file.insert(
+        #     self.db_name, name=target_file_name, hash=source_file_instance.hash
+        # )
 
-    fh = query_fs.create(test_file_path, mode=0o777)
+        raise NotImplementedError()
 
-    query_fs.write(test_file_path, b"Hello world", 0, fh)
+    def readlink(self, path: PathLike) -> AnyStr:
+        logger.info(
+            format_log_entry(self.__class__.__name__, "symlink", path=path)
+        )
 
-    query_fs.release(test_file_path, fh)
+        raise NotImplementedError()
 
-    fh = query_fs.open(test_file_path, os.O_RDONLY)
+        # file_name = os.path.basename(path)
 
-    data = query_fs.read(test_file_path, 1024, 0, fh)
+        # file_instance = file.fetch_one_by_name(self.db_name, file_name)
 
-    print(data)
+        # path = self.blobs.joinpath(file_instance.hash)
 
-    query_fs.release(test_file_path, fh)
+    def unlink(self, path: PathLike) -> None:
+        logger.info(
+            format_log_entry(self.__class__.__name__, "unlink", path=path)
+        )
 
-    fh = query_fs.open(test_file_path, os.O_WRONLY)
+        # remove from db
+        file_name = os.path.basename(path)
 
-    query_fs.write(test_file_path, b"Bli bla blub", 0, fh)
+        file_instance = file.fetch_one_by_name(self.db_name, file_name)
 
-    query_fs.release(test_file_path, fh)
+        file.delete(self.db_name, file_instance)
+
+        # remove headless blobs
+        pointers = file.fetch_many_by_hash(self.db_name, file_instance.hash)
+
+        if not pointers:
+            previous_blob_path = self.blobs.joinpath(file_instance.hash)
+
+            if previous_blob_path.is_file():
+                os.unlink(previous_blob_path)
+
+    def truncate(
+        self, path: PathLike, length: int, fh: Optional[int] = None
+    ) -> None:
+        logger.info(
+            format_log_entry(
+                self.__class__.__name__, "truncate", length=length, fh=fh
+            )
+        )
+
+    def utimens(self, path: PathLike, times: Tuple[int, int] = ...) -> None:
+        logger.info(
+            format_log_entry(
+                self.__class__.__name__, "utimens", path=path, times=times
+            )
+        )
+
+        file_name = os.path.basename(path)
+
+        file_instance = file.fetch_one_by_name(self.db_name, file_name)
+
+        file.update_utimens(self.db_name, file_instance, times)
+
+        # path = self.blobs.joinpath(file_instance.hash)
+
+        # return os.utime(path, times)
