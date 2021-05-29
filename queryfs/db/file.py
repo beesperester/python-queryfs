@@ -13,8 +13,9 @@ class File(db.Schema):
             "name": "text",
             "hash": "text",
             "fh": "integer",
-            "atime": "integer",
-            "mtime": "integer",
+            "ctime": "real",
+            "atime": "real",
+            "mtime": "real",
         }
     )
 
@@ -23,8 +24,9 @@ class File(db.Schema):
     hash: str
     text: str
     fh: int
-    atime: int
-    mtime: int
+    ctime: float
+    atime: float
+    mtime: float
 
 
 def insert(db_name: PathLike, **kwargs: Any) -> File:
@@ -43,18 +45,22 @@ def fetch_one_by_fh(db_name: PathLike, fh: int) -> File:
     return db.fetch_one_by(db_name, File, fh=fh)
 
 
-def update_fh(db_name: PathLike, file: File, fh: int) -> File:
-    return db.update(db_name, File, file.id, fh=fh)
+def update(db_name: PathLike, file: File, **kwargs: Any) -> File:
+    return db.update(db_name, File, file.id, **kwargs)
 
 
-def update_hash(db_name: PathLike, file: File, hash: str) -> File:
-    return db.update(db_name, File, file.id, hash=hash)
+# def update_fh(db_name: PathLike, file: File, fh: int) -> File:
+#     return db.update(db_name, File, file.id, fh=fh)
 
 
-def update_utimens(
-    db_name: PathLike, file: File, times: Tuple[int, int]
-) -> File:
-    return db.update(db_name, File, file.id, atime=times[0], mtime=times[1])
+# def update_hash(db_name: PathLike, file: File, hash: str) -> File:
+#     return db.update(db_name, File, file.id, hash=hash)
+
+
+# def update_utimens(
+#     db_name: PathLike, file: File, times: Tuple[int, int]
+# ) -> File:
+#     return db.update(db_name, File, file.id, atime=times[0], mtime=times[1])
 
 
 def delete(db_name: PathLike, file: File) -> None:

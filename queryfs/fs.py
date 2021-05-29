@@ -1,6 +1,8 @@
+from ctypes import Union
 import os
 import logging
 
+from time import time
 from typing import AnyStr, Optional, Any, Dict, Tuple
 from pathlib import Path
 from threading import Lock
@@ -35,7 +37,7 @@ class FuseFiles(object):
 
         return super().__call__(op, path, *args)  # type: ignore
 
-    def getattr(self, path: str, fh: Optional[int] = None) -> Dict[str, int]:
+    def getattr(self, path: str, fh: Optional[int] = None) -> Dict[str, Any]:
         logger.info(
             format_log_entry(
                 self.__class__.__name__, "getattr", path=path, fh=fh
@@ -47,7 +49,7 @@ class FuseFiles(object):
         file_instance = file.fetch_one_by_name(self.db_name, file_name)
 
         st = os.lstat(self.blobs.joinpath(file_instance.hash))
-        return dict(
+        data = dict(
             (key, getattr(st, key))
             for key in (
                 "st_atime",
@@ -60,6 +62,15 @@ class FuseFiles(object):
                 "st_uid",
             )
         )
+
+        data = {
+            **data,
+            "st_atime": file_instance.atime,
+            "st_ctime": file_instance.ctime,
+            "st_mtime": file_instance.mtime,
+        }
+
+        return data
 
     def create(
         self, path: PathLike, mode: int, fi: Optional[bool] = None
@@ -75,7 +86,16 @@ class FuseFiles(object):
 
         fh = os.open(self.temp.joinpath(file_name), flags, mode)
 
-        file.insert(self.db_name, name=file_name, fh=fh)
+        ctime = time()
+
+        file.insert(
+            self.db_name,
+            name=file_name,
+            fh=fh,
+            ctime=ctime,
+            atime=ctime,
+            mtime=ctime,
+        )
 
         return fh
 
@@ -95,9 +115,13 @@ class FuseFiles(object):
 
             fh = os.open(self.temp.joinpath(file_name), flags, 0o511)
 
-            file.update_fh(self.db_name, file_instance, fh)
+            # udpate access time and fh
+            file.update(self.db_name, file_instance, atime=time(), fh=fh)
         else:
             fh = os.open(self.blobs.joinpath(file_instance.hash), flags)
+
+            # udpate access time
+            file.update(self.db_name, file_instance, atime=time())
 
         return fh
 
@@ -158,10 +182,10 @@ class FuseFiles(object):
             # create hash from file
             hash = hash_from_file(temp_path)
 
-            file.update_hash(self.db_name, file_instance, hash)
-
-            # release file handle
-            file.update_fh(self.db_name, file_instance, 0)
+            # udpate file
+            file.update(
+                self.db_name, file_instance, hash=hash, fh=0, mtime=time()
+            )
 
             logger.info(
                 format_log_entry(
@@ -283,18 +307,25 @@ class FuseFiles(object):
             )
         )
 
-    def utimens(self, path: PathLike, times: Tuple[int, int] = ...) -> None:
+    def utimens(
+        self, path: PathLike, times: Tuple[float, float] = ...
+    ) -> None:
         logger.info(
             format_log_entry(
                 self.__class__.__name__, "utimens", path=path, times=times
             )
         )
 
+        if times is None:
+            times = (time(), time())
+
         file_name = os.path.basename(path)
 
         file_instance = file.fetch_one_by_name(self.db_name, file_name)
 
-        file.update_utimens(self.db_name, file_instance, times)
+        file.update(
+            self.db_name, file_instance, atime=times[0], mtime=times[0]
+        )
 
         # path = self.blobs.joinpath(file_instance.hash)
 
