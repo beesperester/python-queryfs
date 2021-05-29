@@ -1,13 +1,17 @@
 from __future__ import annotations
+from os import PathLike
 
 import sqlite3
 import logging
 
 from contextlib import closing
 from collections import OrderedDict
-from typing import Dict, Iterable, List, Any, Optional, Type, TypeVar
+from pathlib import Path
+from typing import Dict, Iterable, List, Any, Optional, Type, TypeVar, Union
 
 T = TypeVar("T", bound="Schema")
+
+logger = logging.getLogger("db")
 
 
 class NotFoundException(Exception):
@@ -97,12 +101,12 @@ class Schema:
                 setattr(self, self.get_field_names()[index], arg)
 
 
-def create_table(db_name: str, model: Type[T]) -> None:
+def create_table(db_name: Union[str, Path], model: Type[T]) -> None:
     with sqlite3.connect(db_name) as connection:
         with closing(connection.cursor()) as cursor:
             query = (model.create_schema_exists_query(), [model.table_name])
 
-            logging.info(query)
+            logger.info(query)
 
             table = cursor.execute(
                 *query,
@@ -111,12 +115,12 @@ def create_table(db_name: str, model: Type[T]) -> None:
             if not table:
                 query = model.create_schema_query()
 
-                logging.info(query)
+                logger.info(query)
 
                 cursor.execute(query)
 
 
-def insert(db_name: str, schema: Type[T], **kwargs: Any) -> T:
+def insert(db_name: Union[str, Path], schema: Type[T], **kwargs: Any) -> T:
     with sqlite3.connect(db_name) as connection:
         with closing(connection.cursor()) as cursor:
             data = OrderedDict(
@@ -132,7 +136,7 @@ def insert(db_name: str, schema: Type[T], **kwargs: Any) -> T:
                 list(data.values()),
             )
 
-            logging.info(query)
+            logger.info(query)
 
             cursor.execute(*query)
 
@@ -141,7 +145,9 @@ def insert(db_name: str, schema: Type[T], **kwargs: Any) -> T:
     return fetch_one_by_id(db_name, schema, item_id)
 
 
-def fetch_by(db_name: str, schema: Type[T], **kwargs: Any) -> sqlite3.Cursor:
+def fetch_by(
+    db_name: Union[str, Path], schema: Type[T], **kwargs: Any
+) -> sqlite3.Cursor:
     with sqlite3.connect(db_name) as connection:
         # with closing(connection.cursor()) as cursor:
         cursor = connection.cursor()
@@ -159,17 +165,19 @@ def fetch_by(db_name: str, schema: Type[T], **kwargs: Any) -> sqlite3.Cursor:
             list(data.values()),
         )
 
-        logging.info(query)
+        logger.info(query)
 
         return cursor.execute(*query)
 
 
-def fetch_one_by(db_name: str, schema: Type[T], **kwargs: Any) -> T:
+def fetch_one_by(
+    db_name: Union[str, Path], schema: Type[T], **kwargs: Any
+) -> T:
     cursor = fetch_by(db_name, schema, **kwargs)
 
     result = cursor.fetchone()
 
-    logging.info(result)
+    logger.info(result)
 
     cursor.close()
 
@@ -183,16 +191,18 @@ def fetch_one_by(db_name: str, schema: Type[T], **kwargs: Any) -> T:
     raise NotFoundException()
 
 
-def fetch_one_by_id(db_name: str, schema: Type[T], id: int) -> T:
+def fetch_one_by_id(db_name: Union[str, Path], schema: Type[T], id: int) -> T:
     return fetch_one_by(db_name, schema, id=id)
 
 
-def fetch_many_by(db_name: str, schema: Type[T], **kwargs: Any) -> List[T]:
+def fetch_many_by(
+    db_name: Union[str, Path], schema: Type[T], **kwargs: Any
+) -> List[T]:
     cursor = fetch_by(db_name, schema, **kwargs)
 
     result = cursor.fetchall()
 
-    logging.info(result)
+    logger.info(result)
 
     cursor.close()
 
@@ -206,11 +216,13 @@ def fetch_many_by(db_name: str, schema: Type[T], **kwargs: Any) -> List[T]:
     return items
 
 
-def fetch_all(db_name: str, schema: Type[T]) -> List[T]:
+def fetch_all(db_name: Union[str, Path], schema: Type[T]) -> List[T]:
     return fetch_many_by(db_name, schema)
 
 
-def update(db_name: str, schema: Type[T], id: int, **kwargs: Any) -> T:
+def update(
+    db_name: Union[str, Path], schema: Type[T], id: int, **kwargs: Any
+) -> T:
     with sqlite3.connect(db_name) as connection:
         with closing(connection.cursor()) as cursor:
             data = OrderedDict(
@@ -226,18 +238,18 @@ def update(db_name: str, schema: Type[T], id: int, **kwargs: Any) -> T:
                 [*list(data.values()), id],
             )
 
-            logging.info(query)
+            logger.info(query)
 
             cursor.execute(*query)
 
     return fetch_one_by_id(db_name, schema, id)
 
 
-def delete(db_name: str, schema: Type[T], id: int) -> None:
+def delete(db_name: Union[str, Path], schema: Type[T], id: int) -> None:
     with sqlite3.connect(db_name) as connection:
         with closing(connection.cursor()) as cursor:
             query = (schema.create_delete_query(), [id])
 
-            logging.info(query)
+            logger.info(query)
 
             cursor.execute(*query)
