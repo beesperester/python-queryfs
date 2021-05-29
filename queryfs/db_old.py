@@ -14,6 +14,13 @@ class File:
         self.hash = hash
         self.lock = lock
 
+    def __repr__(self) -> str:
+        fields = ["id", "name", "hash", "lock"]
+
+        info = " ".join([f"{x}='{getattr(self, x)}'" for x in fields])
+
+        return f"<{self.__class__.__name__} {info} at {hex(id(self))}>"
+
 
 def init(db_name: str) -> None:
     with sqlite3.connect("files.db") as connection:
@@ -41,7 +48,7 @@ def readdir(db_name: str) -> List[File]:
     return rows
 
 
-def lock(db_name: str, id: int, fh: int) -> None:
+def lock(db_name: str, id: int, fh: int) -> File:
     with sqlite3.connect(db_name) as connection:
         cursor = connection.cursor()
         cursor.execute(
@@ -51,6 +58,13 @@ def lock(db_name: str, id: int, fh: int) -> None:
                 id,
             ),
         )
+
+    file = get_file_by_id(db_name, id)
+
+    if file:
+        return file
+
+    raise NotFoundException()
 
 
 def unlock(db_name: str, id: int) -> None:
@@ -72,6 +86,18 @@ def create(db_name: str, name: str, fh: int) -> File:
         )
 
         return File(cursor.lastrowid, name, "", 1)
+
+
+def get_file_by_id(db_name: str, id: int) -> Optional[File]:
+    with sqlite3.connect(db_name) as connection:
+        cursor = connection.cursor()
+
+        result = cursor.execute(
+            "SELECT * FROM files WHERE id = ?", (id,)
+        ).fetchone()
+
+        if result:
+            return File(*result)
 
 
 def get_file_by_name(db_name: str, name: str) -> Optional[File]:
@@ -110,26 +136,13 @@ def get_file_by_lock(db_name: str, lock: int) -> Optional[File]:
             return File(*result)
 
 
-def release(db_name: str, name: str, hash: str) -> None:
+def release(db_name: str, id: int, hash: str) -> None:
     with sqlite3.connect(db_name) as connection:
         cursor = connection.cursor()
-
-        previous = get_file_by_name(db_name, name)
-
-        if previous:
-            cursor.execute(
-                "UPDATE files SET hash = ?, lock = 0 WHERE id = ?",
-                (
-                    hash,
-                    previous.id,
-                ),
-            )
-        else:
-            cursor.execute(
-                f"INSERT INTO files (name, hash, lock) VALUES (?, ?, ?)",
-                (
-                    name,
-                    hash,
-                    0,
-                ),
-            )
+        cursor.execute(
+            "UPDATE files SET hash = ?, lock = 0 WHERE id = ?",
+            (
+                hash,
+                id,
+            ),
+        )

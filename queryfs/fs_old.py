@@ -81,18 +81,38 @@ class Loopback(Operations):
         # self.file_handles: Files = Files()
 
     def __call__(self, op: str, path: str, *args: Any) -> Any:  # type: ignore
+        file_basename = os.path.basename(path)
+
+        old_path = path
+
+        if file_basename.startswith("."):
+            raise FuseOSError(EACCES)
+
+        if path == "/":
+            path = str(self.temp) + path
+        else:
+            file = db.get_file_by_name(self.db_name, file_basename)
+
+            if file and file.hash:
+                path = str(self.blobs.joinpath(file.hash))
+            else:
+                path = str(self.temp.joinpath(file_basename))
+
+        # print("transformed path", old_path, path)
+
         # catch every function call and modify path parameter
-        return super().__call__(op, self.root + path, *args)
+        # return super().__call__(op, self.root + path, *args)
+        return super().__call__(op, path, *args)
 
     # filesystem methods
 
     def access(self, path: str, amode: int) -> None:
-        file_basename = os.path.basename(path)
+        # file_basename = os.path.basename(path)
 
-        result = db.get_file_by_name(self.db_name, file_basename)
+        # result = db.get_file_by_name(self.db_name, file_basename)
 
-        if result:
-            return
+        # if result:
+        #     return
 
         if not os.access(path, amode):
             raise FuseOSError(EACCES)
@@ -114,47 +134,52 @@ class Loopback(Operations):
         file_basename = os.path.basename(path)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
 
-        temp_path = self.temp.joinpath(file_basename)
+        # temp_path = self.temp.joinpath(file_basename)
 
-        fh = os.open(temp_path, flags, mode)
+        # return handle to temp file path
+        fh = os.open(path, flags, mode)
 
-        db.create(self.db_name, file_basename, fh)
+        # create file in database with fh
+        file = db.create(self.db_name, file_basename, fh)
 
-        print("create", file_basename, fh)
+        print("create", path)
 
         return fh
 
     def open(self, path: str, flags: int) -> int:
+        print(f"open ({flags})", path)
+
         file_basename = os.path.basename(path)
 
-        file = db.get_file_by_name(self.db_name, file_basename)
+        hash_file = db.get_file_by_hash(self.db_name, file_basename)
 
-        if file:
-            if flags == 0:
-                # read only
-                path = str(self.blobs.joinpath(file.hash))
-                path = str(self.temp.joinpath(file_basename))
-                open(path, "wb")
-                print("path to read only file", path)
+        if hash_file:
+            if (
+                hash_file.hash
+                == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                or flags > 0
+            ):
+                # attempt to open hashed file
+                # blobs hit return empty temp file instead
+                path = str(self.temp.joinpath(hash_file.name))
             else:
-                # write
-                path = str(self.temp.joinpath(file_basename))
+                # fh for blob file
+                path = str(self.blobs.joinpath(hash_file.hash))
 
-                open(path, "wb")
-
-                print("path to empty temp file", path)
-        else:
-            path = str(self.temp.joinpath(file_basename))
-
-            print("path to existing temp file", path)
+        print("open this instead", path)
 
         fh = os.open(path, flags)
 
-        if file and flags > 0:
-            # lock file with filehandle in DB
-            db.lock(self.db_name, file.id, fh)
+        if hash_file:
+            if flags > 0:
+                # update lock on file
+                hash_file = db.lock(self.db_name, hash_file.id, fh)
 
-        print(f"open ({flags})", file_basename, fh)
+                print("update lock", hash_file)
+
+            # print(f"open ({flags})", hash_file)
+        # else:
+        # print(f"open ({flags})", path)
 
         return fh
 
@@ -164,6 +189,7 @@ class Loopback(Operations):
             return os.read(fh, size)
 
     def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
+        print("write", fh)
         with self.rwlock:
             os.lseek(fh, offset, 0)
 
@@ -175,7 +201,7 @@ class Loopback(Operations):
         file = db.get_file_by_lock(self.db_name, fh)
 
         if file:
-            print("release", file.name, fh)
+            print("release", file)
 
         if file and file.lock > 0:
             sha256_hash = sha256()
@@ -189,7 +215,7 @@ class Loopback(Operations):
             hash = sha256_hash.hexdigest()
 
             # update hash
-            db.release(self.db_name, file.name, hash)
+            db.release(self.db_name, file.id, hash)
 
             blob_file = self.blobs.joinpath(hash)
 
@@ -208,12 +234,15 @@ class Loopback(Operations):
     def getattr(self, path: str, fh: Optional[int] = None) -> Dict[str, int]:
         file_basename = os.path.basename(path)
 
-        file = db.get_file_by_name(self.db_name, file_basename)
+        # file = db.get_file_by_name(self.db_name, file_basename)
 
-        if file:
-            path = str(self.blobs.joinpath(file.hash))
-        else:
-            path = str(self.temp.joinpath(file_basename))
+        # if file and file.hash:
+        #     path = str(self.blobs.joinpath(file.hash))
+        # else:
+        #     path = str(self.temp.joinpath(file_basename))
+
+        if file_basename:
+            print("getattr", path)
 
         st = os.lstat(path)
         return dict(
@@ -231,20 +260,26 @@ class Loopback(Operations):
         )
 
     def link(self, target: str, source: str) -> None:
+        print("link", target, source)
+
         return os.link(self.root + source, target)
 
     def rename(self, old: str, new: str) -> None:
+        print("rename", old, new)
+
         return os.rename(old, self.root + new)
 
     def statfs(self, path: str):
-        file_basename = os.path.basename(path)
+        # file_basename = os.path.basename(path)
 
-        file = db.get_file_by_name(self.db_name, file_basename)
+        # file = db.get_file_by_name(self.db_name, file_basename)
 
-        if file:
-            path = str(self.blobs.joinpath(file.hash))
-        else:
-            path = str(self.temp.joinpath(file_basename))
+        # if file:
+        #     path = str(self.blobs.joinpath(file.hash))
+        # else:
+        #     path = str(self.temp.joinpath(file_basename))
+
+        # print("statfs", path)
 
         stv = os.statvfs(path)
         return dict(
@@ -264,9 +299,13 @@ class Loopback(Operations):
         )
 
     def symlink(self, target: str, source: str):
+        print("symlink", target, source)
+
         return os.symlink(source, target)
 
     def truncate(self, path: str, length: int, fh: Optional[int] = None):
+        print("truncate", path)
+
         with open(path, "r+") as f:
             f.truncate(length)
 
