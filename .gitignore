@@ -1,8 +1,10 @@
 # project
 scratchpad*
 test*.txt
-root
+log.txt
+repository
 mountpoint
+*.db
 
 # macOs
 .DS_Store
