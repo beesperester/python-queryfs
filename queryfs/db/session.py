@@ -41,8 +41,19 @@ class Statement:
         self.values = values
 
 
+class Constraint:
+    def __init__(self, field: str, type: str, value: Any) -> None:
+        self.field = field
+        self.type = type
+        self.value = value
+
+
 class QueryBuilder(Generic[T]):
-    def __init__(self, session: Session, schema: Type[T]) -> None:
+    def __init__(
+        self,
+        session: Session,
+        schema: Type[T],
+    ) -> None:
         self.session = session
         self.schema = schema
 
@@ -131,15 +142,37 @@ class QueryBuilder(Generic[T]):
 
         return self
 
-    def where(self, **kwargs: Any) -> QueryBuilder[T]:
-        fields: str = ", ".join([x for x in kwargs.keys()])
-        values: str = ", ".join(["?" for _ in kwargs.keys()])
+    def where(self, *args: Constraint) -> QueryBuilder[T]:
+        # fields: str = ", ".join([x for x in kwargs.keys()])
+        # values: str = ", ".join(["?" for _ in kwargs.keys()])
+
+        constraints_grouped: Dict[str, List[Constraint]] = {}
+
+        for constraint in args:
+            group = constraints_grouped.setdefault(constraint.type, [])
+
+            group.append(constraint)
+
+        constraint_strings: List[str] = []
+
+        values: List[Any] = []
+
+        for constraint_type, constraints in constraints_grouped.items():
+            fields_string: str = ", ".join([x.field for x in constraints])
+            values_string: str = ", ".join(["?" for _ in constraints])
+
+            constraint_strings.append(
+                f"({fields_string}) {constraint_type} ({values_string})"
+            )
+            values += [x.value for x in constraints]
+
+        constraint_string = " AND ".join(constraint_strings)
 
         self.query.append(
             Statement(
                 Statement.TYPE_FILTER,
-                " ".join(["WHERE", f"({fields}) = ({values})"]),
-                list(kwargs.values()),
+                " ".join(["WHERE", constraint_string]),
+                values,
             )
         )
 
@@ -226,7 +259,7 @@ class Session:
     def connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_name)
 
-    def create_table(self, schema: Type[T]) -> None:
+    def table_exists(self, schema: Type[T]) -> bool:
         with self.connect() as connection:
             with closing(connection.cursor()) as cursor:
                 check_table_query = (
@@ -236,19 +269,38 @@ class Session:
 
                 result = cursor.execute(*check_table_query).fetchone()
 
-                if not result:
-                    fields = ", ".join(
-                        [
-                            f"{key} {value.upper()}"
-                            for key, value in schema.fields.items()
-                        ]
-                    )
+                if result:
+                    return True
 
-                    create_table_query = (
-                        f"CREATE TABLE {schema.table_name} ({fields})"
-                    )
+        return False
 
-                    cursor.execute(create_table_query)
+    def create_table(self, schema: Type[T]) -> None:
+        if self.table_exists(schema):
+            return
+
+        with self.connect() as connection:
+            with closing(connection.cursor()) as cursor:
+                fields: List[str] = [
+                    f"{key} {value.upper()}"
+                    for key, value in schema.fields.items()
+                ]
+
+                # if schema.relations:
+                #     for _, relation in schema.relations.items():
+                #         fields.append(
+                #             f"FOREIGN KEY ({relation.own_key}) REFERENCES {relation.schema.table_name}"
+                #         )
+
+                fields_string = ", ".join(fields)
+
+                create_table_query: Tuple[str, List[Any]] = (
+                    f"CREATE TABLE {schema.table_name} ({fields_string})",
+                    [],
+                )
+
+                logger.info(create_table_query)
+
+                cursor.execute(*create_table_query)
 
 
 if __name__ == "__main__":
@@ -274,7 +326,9 @@ if __name__ == "__main__":
 
     print(last_row_id)
 
-    session.query(Test).delete().where(id=last_row_id).execute().close()
+    session.query(Test).delete().where(
+        Constraint("name", "=", "hello"), Constraint("id", "is", 1)
+    ).execute().close()
 
     # test fetch one
     # test = (

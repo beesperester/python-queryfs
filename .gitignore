@@ -1,6 +1,7 @@
 # project
 scratchpad*
 test*.txt
+log.txt
 repository
 mountpoint
 *.db

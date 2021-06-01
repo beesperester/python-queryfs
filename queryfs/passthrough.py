@@ -13,8 +13,9 @@ from time import time
 from pathlib import Path
 from typing import Any, Callable, Optional, Dict, Union, Tuple, List
 from queryfs import db, PathLike
-from queryfs.db.session import Session
+from queryfs.db.session import Constraint, Session
 from queryfs.models.file import File
+from queryfs.models.directory import Directory
 from queryfs.hashing import hash_from_bytes, hash_from_file
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 
@@ -50,6 +51,7 @@ class Passthrough(LoggingMixIn, Operations):
         # create tables
         self.session = Session(self.db_name)
 
+        self.session.create_table(Directory)
         self.session.create_table(File)
 
         # keep track of writable file handles
@@ -73,41 +75,113 @@ class Passthrough(LoggingMixIn, Operations):
                 format_lifecycle_step(lifecycle_name, **kwargs)
             )
 
-    def rewrite_path(self, path: PathLike) -> PathLike:
-        path = self.temp.joinpath(str(path)[1:])
+    def resolve_db_entity(
+        self, path: PathLike, directory: Optional[Directory] = None
+    ) -> Optional[Union[File, Directory]]:
+        parts = list(filter(bool, str(path).split("/")))
 
-        if path.exists():
-            return path
-        else:
-            # blob path
-            file_name = os.path.basename(path)
+        if not parts:
+            return
 
-            file_instance = (
-                self.session.query(File)
-                .select()
-                .where(name=file_name)
-                .execute()
-                .fetch_one()
-            )
+        # get first path element
+        first_link = parts[0]
 
-            if file_instance:
-                blob_path = self.blobs.joinpath(file_instance.hash)
+        # build constraints
+        directory_id = None
 
-                if blob_path.is_file():
-                    path = blob_path
+        if directory:
+            # add directory id constraint
+            # if directory is not none
+            directory_id = directory.id
 
-        return path
+        constraints: List[Constraint] = [
+            Constraint("name", "is", first_link),
+            Constraint("directory_id", "is", directory_id),
+        ]
+
+        directory_instance = (
+            self.session.query(Directory)
+            .select()
+            .where(*constraints)
+            .execute()
+            .fetch_one()
+        )
+
+        if directory_instance:
+            if len(parts) > 1:
+                return self.resolve_db_entity(
+                    "/".join(parts[1:]), directory_instance
+                )
+
+            return directory_instance
+
+        file_instance = (
+            self.session.query(File)
+            .select()
+            .where(*constraints)
+            .execute()
+            .fetch_one()
+        )
+
+        if file_instance:
+            return file_instance
+
+    def resolve_path(
+        self, path: PathLike, directory: Optional[Directory] = None
+    ) -> Union[File, Directory, PathLike]:
+        parts = list(filter(bool, str(path).split("/")))
+
+        temp_path = self.temp.joinpath("/".join(parts))
+
+        if temp_path.exists():
+            return temp_path
+
+        db_entity = self.resolve_db_entity(path)
+
+        if db_entity:
+            return db_entity
+
+        return temp_path
+
+    # def rewrite_path(self, path: PathLike) -> PathLike:
+    #     path = self.temp.joinpath(str(path)[1:])
+
+    #     if path.exists():
+    #         return path
+    #     else:
+    #         # blob path
+    #         file_name = os.path.basename(path)
+
+    #         file_instance = (
+    #             self.session.query(File)
+    #             .select()
+    #             .where(Constraint("name", "=", "file_name"))
+    #             .execute()
+    #             .fetch_one()
+    #         )
+
+    #         if file_instance:
+    #             blob_path = self.blobs.joinpath(file_instance.hash)
+
+    #             if blob_path.is_file():
+    #                 path = blob_path
+
+    #     return path
 
     # Filesystem methods
     # ==================
 
     def access(self, path: PathLike, amode: int) -> None:
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
 
-        # if str(path) == str(self.temp):
-        #     path = self.blobs
-        # if amode == os.O_WRONLY:
-        #     return
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            return
+        else:
+            path = result
+
+        # path = self.rewrite_path(path)
 
         if not os.access(path, amode):
             raise FuseOSError(errno.EACCES)
@@ -125,8 +199,17 @@ class Passthrough(LoggingMixIn, Operations):
     def getattr(
         self, path: PathLike, fh: Optional[int] = None
     ) -> Dict[str, Any]:
-        file_name = os.path.basename(path)
-        path = self.rewrite_path(path)
+        # original_path = path
+        # basename = os.path.basename(original_path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
+
         key_names = [
             "st_atime",
             "st_ctime",
@@ -141,40 +224,72 @@ class Passthrough(LoggingMixIn, Operations):
 
         st = os.lstat(path)
 
-        result = {key: getattr(st, key) for key in key_names}
+        attributes = {key: getattr(st, key) for key in key_names}
 
-        if str(path).startswith(str(self.blobs)):
-            file_instance = (
-                self.session.query(File)
-                .select()
-                .where(name=file_name)
-                .execute()
-                .fetch_one()
-            )
+        if isinstance(result, File):
+            stat_db: Dict[str, Union[int, float]] = {
+                "st_atime": result.atime,
+                "st_birthtime": result.ctime,
+                "st_ctime": result.ctime,
+                "st_mtime": result.mtime,
+                "st_size": result.size,
+            }
 
-            if file_instance:
-                stat_db: Dict[str, Union[int, float]] = {
-                    "st_atime": file_instance.atime,
-                    "st_birthtime": file_instance.ctime,
-                    "st_ctime": file_instance.ctime,
-                    "st_mtime": file_instance.mtime,
-                    "st_size": file_instance.size,
-                }
+            attributes = {**attributes, **stat_db}
 
-                result = {**result, **stat_db}
-
-        return result
+        return attributes
 
     getxattr = None  # type: ignore
 
     def readdir(
         self, path: PathLike, fh: Optional[int] = None
     ) -> Union[List[str], List[Tuple[str, Dict[str, int], int]]]:
-        file_instances = (
-            self.session.query(File).select().execute().fetch_all()
-        )
+        result = self.resolve_path(path)
 
-        return [".", ".."] + [x.name for x in file_instances]
+        dirents: List[str] = [".", ".."]
+
+        if isinstance(result, Directory):
+            file_instances = (
+                self.session.query(File)
+                .select()
+                .where(Constraint("directory_id", "is", result.id))
+                .execute()
+                .fetch_all()
+            )
+
+            dirents += [x.name for x in file_instances]
+
+            directory_instances = (
+                self.session.query(Directory)
+                .select()
+                .where(Constraint("directory_id", "is", result.id))
+                .execute()
+                .fetch_all()
+            )
+
+            dirents += [x.name for x in directory_instances]
+        else:
+            file_instances = (
+                self.session.query(File)
+                .select()
+                .where(Constraint("directory_id", "is", None))
+                .execute()
+                .fetch_all()
+            )
+
+            dirents += [x.name for x in file_instances]
+
+            directory_instances = (
+                self.session.query(Directory)
+                .select()
+                .where(Constraint("directory_id", "is", None))
+                .execute()
+                .fetch_all()
+            )
+
+            dirents += [x.name for x in directory_instances]
+
+        return dirents
 
     readlink = None  # type: ignore
     # def readlink(self, path):
@@ -194,12 +309,29 @@ class Passthrough(LoggingMixIn, Operations):
     #     full_path = self._full_path(path)
     #     return os.rmdir(full_path)
 
-    mkdir = None  # type: ignore
-    # def mkdir(self, path, mode):
-    #     return os.mkdir(self._full_path(path), mode)
+    # mkdir = None  # type: ignore
+    def mkdir(self, path: PathLike, mode: int) -> None:
+        directory_name = os.path.basename(path)
+        result = self.resolve_path(os.path.dirname(path))
+        parent_directory_id = None
+
+        if isinstance(result, Directory):
+            parent_directory_id = result.id
+
+        self.session.query(Directory).insert(
+            name=directory_name, directory_id=parent_directory_id
+        ).execute().close()
 
     def statfs(self, path: PathLike) -> Dict[str, Any]:
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
+
         key_names = [
             "f_bavail",
             "f_bfree",
@@ -228,14 +360,23 @@ class Passthrough(LoggingMixIn, Operations):
     #     return os.symlink(name, self._full_path(target))
 
     def rename(self, old: PathLike, new: PathLike) -> None:
-        old_file_name = os.path.basename(old)
-        new_file_name = os.path.basename(new)
+        new_name = os.path.basename(new)
+        parent_directory_id = None
 
-        self.session.query(File).update(name=new_file_name).where(
-            name=old_file_name
-        ).execute().close()
+        old_result = self.resolve_db_entity(old)
+        new_parent_result = self.resolve_db_entity(os.path.dirname(new))
 
-        # return os.rename(self._full_path(old), self._full_path(new))
+        if isinstance(new_parent_result, Directory):
+            parent_directory_id = new_parent_result.id
+
+        if isinstance(old_result, File):
+            self.session.query(File).update(
+                name=new_name, directory_id=parent_directory_id
+            ).where(Constraint("id", "is", old_result.id)).execute().close()
+        elif isinstance(old_result, Directory):
+            self.session.query(Directory).update(
+                name=new_name, directory_id=parent_directory_id
+            ).where(Constraint("id", "is", old_result.id)).execute().close()
 
     link = None  # type: ignore
     # def link(self, target, name):
@@ -249,8 +390,16 @@ class Passthrough(LoggingMixIn, Operations):
     # ============
 
     def open(self, path: PathLike, flags: int) -> int:
+        original_path = Path(str(path)[1:])
         file_name = os.path.basename(path)
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
 
         # track lifecycle steps
         if self.insert_file_lifecycle(file_name):
@@ -293,7 +442,7 @@ class Passthrough(LoggingMixIn, Operations):
         file_instance = (
             self.session.query(File)
             .select()
-            .where(name=file_name)
+            .where(Constraint("name", "=", file_name))
             .execute()
             .fetch_one()
         )
@@ -318,6 +467,9 @@ class Passthrough(LoggingMixIn, Operations):
                 # new writable temp file
                 temp_path = self.temp.joinpath(file_name)
 
+                if not temp_path.parent.is_dir():
+                    os.makedirs(temp_path.parent, exist_ok=True)
+
                 flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
 
                 fh = os.open(temp_path, flags)
@@ -341,12 +493,22 @@ class Passthrough(LoggingMixIn, Operations):
         self, path: PathLike, mode: int, fi: Optional[bool] = None
     ) -> int:
         file_name = os.path.basename(path)
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
 
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
 
         # writable temp path
         temp_path = self.temp.joinpath(file_name)
+
+        if not temp_path.parent.is_dir():
+            os.makedirs(temp_path.parent, exist_ok=True)
 
         # track lifecycle steps
         if self.insert_file_lifecycle(file_name):
@@ -363,7 +525,14 @@ class Passthrough(LoggingMixIn, Operations):
 
     def read(self, path: PathLike, size: int, offset: int, fh: int) -> bytes:
         file_name = os.path.basename(path)
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
 
         # track lifecycle steps
         self.append_to_file_lifecycle(
@@ -376,7 +545,14 @@ class Passthrough(LoggingMixIn, Operations):
 
     def write(self, path: PathLike, data: bytes, offset: int, fh: int) -> int:
         file_name = os.path.basename(path)
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
 
         # track lifecycle steps
         self.append_to_file_lifecycle(
@@ -395,7 +571,14 @@ class Passthrough(LoggingMixIn, Operations):
 
     def flush(self, path: PathLike, fh: int) -> None:
         file_name = os.path.basename(path)
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
 
         # track lifecycle steps
         self.append_to_file_lifecycle(file_name, "flush", path=path, fh=fh)
@@ -404,7 +587,14 @@ class Passthrough(LoggingMixIn, Operations):
 
     def fsync(self, path: PathLike, datasync: int, fh: int) -> None:
         file_name = os.path.basename(path)
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
 
         # track lifecycle steps
         self.append_to_file_lifecycle(
@@ -414,8 +604,16 @@ class Passthrough(LoggingMixIn, Operations):
         return os.fsync(fh)
 
     def release(self, path: PathLike, fh: int) -> None:
+        original_path = Path(str(path)[1:])
         file_name = os.path.basename(path)
-        path = self.rewrite_path(path)
+        result = self.resolve_path(path)
+
+        if isinstance(result, File):
+            path = self.blobs.joinpath(result.hash)
+        elif isinstance(result, Directory):
+            path = self.temp
+        else:
+            path = result
 
         # track lifecycle steps
         self.append_to_file_lifecycle(file_name, "release", path=path, fh=fh)
@@ -446,7 +644,7 @@ class Passthrough(LoggingMixIn, Operations):
                 file_instance = (
                     self.session.query(File)
                     .select()
-                    .where(name=file_name)
+                    .where(Constraint("name", "=", file_name))
                     .execute()
                     .fetch_one()
                 )
@@ -457,7 +655,9 @@ class Passthrough(LoggingMixIn, Operations):
 
                     self.session.query(File).update(
                         hash=hash, atime=ctime, mtime=ctime, size=size
-                    ).where(id=file_instance.id).execute().close()
+                    ).where(
+                        Constraint("id", "=", file_instance.id)
+                    ).execute().close()
 
                     self.append_to_file_lifecycle(
                         file_name,
@@ -469,7 +669,7 @@ class Passthrough(LoggingMixIn, Operations):
                     pointers = (
                         self.session.query(File)
                         .select("id")
-                        .where(hash=previous_hash)
+                        .where(Constraint("hash", "=", previous_hash))
                         .execute()
                         .fetch_all()
                     )
@@ -480,6 +680,14 @@ class Passthrough(LoggingMixIn, Operations):
                         if previous_blob_path.is_file():
                             os.unlink(previous_blob_path)
                 else:
+                    directory_id = None
+                    parent_directory_instance = self.resolve_db_entity(
+                        original_path.parent
+                    )
+
+                    if parent_directory_instance:
+                        directory_id = parent_directory_instance.id
+
                     # insert new file
                     self.session.query(File).insert(
                         name=file_name,
@@ -488,6 +696,7 @@ class Passthrough(LoggingMixIn, Operations):
                         atime=ctime,
                         mtime=ctime,
                         size=size,
+                        directory_id=directory_id,
                     ).execute().close()
 
                     self.append_to_file_lifecycle(
