@@ -28,6 +28,18 @@ def format_lifecycle_step(name: str, **kwargs: Any) -> str:
     return f"{name}: {format_kwargs(**kwargs)}"
 
 
+def remove_empty_directories(path: Path) -> None:
+    for dirent in os.listdir(path):
+        dirent_path = path.joinpath(dirent)
+
+        if dirent_path.is_dir():
+            remove_empty_directories(dirent_path)
+        else:
+            return
+
+    os.rmdir(path)
+
+
 class Passthrough(LoggingMixIn, Operations):
     def __init__(self, repository: PathLike):
         self.repository = Path(repository)
@@ -59,6 +71,13 @@ class Passthrough(LoggingMixIn, Operations):
 
         # keep track of file lifecycle open / create -> read / write -> release
         self.file_lifecycles: Dict[str, List[str]] = {}
+
+        # maintentance
+        for dirent in os.listdir(self.temp):
+            dirent_path = self.temp.joinpath(dirent)
+
+            if dirent_path.is_dir():
+                remove_empty_directories(dirent_path)
 
     def insert_file_lifecycle(self, file_name: str) -> bool:
         self.file_lifecycles.setdefault(file_name, [])
@@ -133,7 +152,10 @@ class Passthrough(LoggingMixIn, Operations):
 
         temp_path = self.temp.joinpath("/".join(parts))
 
-        if temp_path.exists():
+        if temp_path.is_file():
+            return temp_path
+
+        if str(temp_path) == str(self.temp):
             return temp_path
 
         db_entity = self.resolve_db_entity(path)
@@ -390,7 +412,7 @@ class Passthrough(LoggingMixIn, Operations):
     # ============
 
     def open(self, path: PathLike, flags: int) -> int:
-        original_path = Path(str(path)[1:])
+        # original_path = Path(str(path)[1:])
         file_name = os.path.basename(path)
         result = self.resolve_path(path)
 
@@ -400,6 +422,8 @@ class Passthrough(LoggingMixIn, Operations):
             path = self.temp
         else:
             path = result
+
+        path = Path(path)
 
         # track lifecycle steps
         if self.insert_file_lifecycle(file_name):
@@ -422,6 +446,9 @@ class Passthrough(LoggingMixIn, Operations):
 
                 return fh
             else:
+                if not path.parent.is_dir():
+                    os.makedirs(path.parent, exist_ok=True)
+
                 # writable temp file
                 fh = os.open(path, flags)
 
@@ -465,7 +492,7 @@ class Passthrough(LoggingMixIn, Operations):
                 return fh
             else:
                 # new writable temp file
-                temp_path = self.temp.joinpath(file_name)
+                temp_path = self.temp.joinpath(path)
 
                 if not temp_path.parent.is_dir():
                     os.makedirs(temp_path.parent, exist_ok=True)
@@ -502,21 +529,23 @@ class Passthrough(LoggingMixIn, Operations):
         else:
             path = result
 
+        path = Path(path)
+
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
 
         # writable temp path
-        temp_path = self.temp.joinpath(file_name)
+        path = self.temp.joinpath(path)
 
-        if not temp_path.parent.is_dir():
-            os.makedirs(temp_path.parent, exist_ok=True)
+        if not path.parent.is_dir():
+            os.makedirs(path.parent, exist_ok=True)
 
         # track lifecycle steps
         if self.insert_file_lifecycle(file_name):
             self.append_to_file_lifecycle(
-                file_name, "create", path=path, temp_path=temp_path, mode=mode
+                file_name, "create", path=path, mode=mode
             )
 
-        fh = os.open(temp_path, flags, mode)
+        fh = os.open(path, flags, mode)
 
         if fh not in self.writable_file_handles:
             self.writable_file_handles.append(fh)
@@ -615,12 +644,12 @@ class Passthrough(LoggingMixIn, Operations):
         else:
             path = result
 
+        path = Path(path)
+
         # track lifecycle steps
         self.append_to_file_lifecycle(file_name, "release", path=path, fh=fh)
 
         os.close(fh)
-
-        # print(json.dumps(self.file_lifecycles, indent=2))
 
         if fh in self.writable_file_handles:
             # remove file handle from list of writable file handles
@@ -731,11 +760,11 @@ class Passthrough(LoggingMixIn, Operations):
                     )
 
         if file_name in self.file_lifecycles:
-            lifecycle_steps = self.file_lifecycles.setdefault(file_name, [])
+            # lifecycle_steps = self.file_lifecycles.setdefault(file_name, [])
 
-            print("=" * 80)
-            print(f"lifecycle complete for: {file_name}")
-            print("=" * 80)
-            print("\n".join(lifecycle_steps))
+            # print("=" * 80)
+            # print(f"lifecycle complete for: {file_name}")
+            # print("=" * 80)
+            # print("\n".join(lifecycle_steps))
 
             del self.file_lifecycles[file_name]
