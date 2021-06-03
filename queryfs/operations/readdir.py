@@ -1,10 +1,7 @@
-import os
-
-from typing import Dict, Any, Optional, Union, List, Tuple
-from pathlib import Path
+from typing import Dict, Optional, Union, List, Tuple
 
 from queryfs.core import Core
-from queryfs.db.session import Constraint, Session
+from queryfs.db.session import Constraint
 from queryfs.models.file import File
 from queryfs.models.directory import Directory
 

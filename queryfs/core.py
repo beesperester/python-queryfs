@@ -1,13 +1,12 @@
 import os
 
-from fuse import Operations
 from pathlib import Path
-from typing import Any, Callable, Optional, Dict, Union, Tuple, List
+from typing import Optional, Union, List
 
 from queryfs.db.session import Constraint, Session
 from queryfs.models.file import File
 from queryfs.models.directory import Directory
-from queryfs.hashing import hash_from_bytes, hash_from_file
+from queryfs.hashing import hash_from_bytes
 
 
 def remove_empty_directories(path: Path) -> None:

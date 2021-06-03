@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Optional
 from queryfs.db.schema import Schema
 
 

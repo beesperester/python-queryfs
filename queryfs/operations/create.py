@@ -1,12 +1,10 @@
 import os
 import errno
 
-from typing import Dict, Any, Optional, Union, List, Tuple
-from pathlib import Path
+from typing import Optional
 from fuse import FuseOSError
 
 from queryfs.core import Core
-from queryfs.db.session import Constraint, Session
 from queryfs.models.file import File
 from queryfs.models.directory import Directory
 

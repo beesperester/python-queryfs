@@ -1,14 +1,9 @@
 from __future__ import annotations
-from os import PathLike
 
-import sqlite3
 import logging
 
-from contextlib import closing
 from collections import OrderedDict
-from pathlib import Path
-from typing import Dict, Iterable, List, Any, Optional, Type, TypeVar, Union
-from queryfs import PathLike
+from typing import Any, TypeVar
 
 T = TypeVar("T", bound="Schema")
 

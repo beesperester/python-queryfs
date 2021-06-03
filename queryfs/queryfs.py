@@ -1,4 +1,3 @@
-from os import access
 from fuse import Operations, LoggingMixIn
 from pathlib import Path
 from typing import Optional, Dict, Union, List, Tuple
