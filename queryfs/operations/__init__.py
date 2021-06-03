@@ -11,3 +11,5 @@ from queryfs.operations.write import op_write  # type: ignore
 from queryfs.operations.flush import op_flush  # type: ignore
 from queryfs.operations.fsync import op_fsync  # type: ignore
 from queryfs.operations.release import op_release  # type: ignore
+from queryfs.operations.rmdir import op_rmdir  # type: ignore
+from queryfs.operations.unlink import op_unlink  # type: ignore

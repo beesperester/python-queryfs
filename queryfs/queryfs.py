@@ -26,7 +26,8 @@ class QueryFS(LoggingMixIn, Operations):
     def mkdir(self, path: str, mode: int) -> None:
         return operations.op_mkdir(self.core, path, mode)
 
-    rmdir = None  # type: ignore
+    def rmdir(self, path: str) -> None:
+        return operations.op_rmdir(self.core, path)
 
     def statfs(self, path: str) -> Dict[str, int]:
         return operations.op_statfs(self.core, path)
@@ -58,7 +59,8 @@ class QueryFS(LoggingMixIn, Operations):
     def create(self, path: str, mode: int, fi: Optional[bool] = None) -> int:
         return operations.op_create(self.core, path, mode, fi)
 
-    unlink = None  # type: ignore
+    def unlink(self, path: str) -> None:
+        return operations.op_unlink(self.core, path)
 
     utimens = None  # type: ignore
 
