@@ -13,3 +13,4 @@ from queryfs.operations.fsync import op_fsync  # type: ignore
 from queryfs.operations.release import op_release  # type: ignore
 from queryfs.operations.rmdir import op_rmdir  # type: ignore
 from queryfs.operations.unlink import op_unlink  # type: ignore
+from queryfs.operations.truncate import op_truncate  # type: ignore

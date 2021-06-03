@@ -64,7 +64,10 @@ class QueryFS(LoggingMixIn, Operations):
 
     utimens = None  # type: ignore
 
-    truncate = None  # type: ignore
+    def truncate(
+        self, path: str, length: int, fh: Optional[int] = None
+    ) -> None:
+        return operations.op_truncate(self.core, path, length, fh)
 
     def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
         return operations.op_read(self.core, path, size, offset, fh)
