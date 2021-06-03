@@ -1,10 +1,10 @@
 import os
-
 from typing import Dict, Any, Optional, Union
 
 from queryfs.core import Core
-from queryfs.models.file import File
+from queryfs.models.file import File, fetch_filenode
 from queryfs.models.directory import Directory
+from queryfs.models.filenode import Filenode
 
 
 def op_getattr(
@@ -13,9 +13,15 @@ def op_getattr(
     # original_path = path
     # basename = os.path.basename(original_path)
     result = core.resolve_path(path)
+    filenode_instance: Optional[Filenode] = None
 
     if isinstance(result, File):
-        resolved_path = core.blobs.joinpath(result.hash)
+        filenode_instance = fetch_filenode(core.session, result)
+
+        if filenode_instance:
+            resolved_path = core.blobs.joinpath(filenode_instance.hash)
+        else:
+            raise Exception("Missing Filenode")
     elif isinstance(result, Directory):
         resolved_path = core.temp
     else:
@@ -37,13 +43,13 @@ def op_getattr(
 
     attributes = {key: getattr(st, key) for key in key_names}
 
-    if isinstance(result, File):
+    if filenode_instance:
         stat_db: Dict[str, Union[int, float]] = {
-            "st_atime": result.atime,
-            "st_birthtime": result.ctime,
-            "st_ctime": result.ctime,
-            "st_mtime": result.mtime,
-            "st_size": result.size,
+            "st_atime": filenode_instance.atime,
+            "st_birthtime": filenode_instance.ctime,
+            "st_ctime": filenode_instance.ctime,
+            "st_mtime": filenode_instance.mtime,
+            "st_size": filenode_instance.size,
         }
 
         attributes = {**attributes, **stat_db}

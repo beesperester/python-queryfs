@@ -1,11 +1,12 @@
 import os
 
 from pathlib import Path
+from queryfs.models.filenode import Filenode
 from time import time
 
 from queryfs.core import Core
 from queryfs.db.session import Constraint
-from queryfs.models.file import File
+from queryfs.models.file import File, fetch_filenode
 from queryfs.models.directory import Directory
 from queryfs.hashing import hash_from_file
 
@@ -16,7 +17,12 @@ def op_release(core: Core, path: str, fh: int) -> None:
     result = core.resolve_path(path)
 
     if isinstance(result, File):
-        resolved_path = core.blobs.joinpath(result.hash)
+        filenode_instance = fetch_filenode(core.session, result)
+
+        if filenode_instance:
+            resolved_path = core.blobs.joinpath(filenode_instance.hash)
+        else:
+            raise Exception("Missing Filenode")
     elif isinstance(result, Directory):
         resolved_path = core.temp
     else:
@@ -45,18 +51,29 @@ def op_release(core: Core, path: str, fh: int) -> None:
             )
 
             if file_instance:
-                # udpate existing file
-                previous_hash = file_instance.hash
+                filenode_instance = fetch_filenode(core.session, file_instance)
 
-                core.session.query(File).update(
+                if not filenode_instance:
+                    raise Exception("Missing Filenode")
+
+                # udpate existing file
+                previous_hash = filenode_instance.hash
+
+                core.session.query(Filenode).update(
                     hash=hash, atime=ctime, mtime=ctime, size=size
                 ).where(
-                    Constraint("id", "=", file_instance.id)
+                    Constraint("id", "=", filenode_instance.id)
                 ).execute().close()
+
+                # core.session.query(File).update(
+                #     hash=hash, atime=ctime, mtime=ctime, size=size
+                # ).where(
+                #     Constraint("id", "=", file_instance.id)
+                # ).execute().close()
 
                 # remove pointless blobs
                 pointers = (
-                    core.session.query(File)
+                    core.session.query(Filenode)
                     .select("id")
                     .where(Constraint("hash", "=", previous_hash))
                     .execute()
@@ -77,15 +94,25 @@ def op_release(core: Core, path: str, fh: int) -> None:
                 if parent_directory_instance:
                     directory_id = parent_directory_instance.id
 
+                # insert new filenode
+                filenode_id = (
+                    core.session.query(Filenode)
+                    .insert(
+                        hash=hash,
+                        ctime=ctime,
+                        atime=ctime,
+                        mtime=ctime,
+                        size=size,
+                    )
+                    .execute()
+                    .get_last_row_id()
+                )
+
                 # insert new file
                 core.session.query(File).insert(
                     name=file_name,
-                    hash=hash,
-                    ctime=ctime,
-                    atime=ctime,
-                    mtime=ctime,
-                    size=size,
                     directory_id=directory_id,
+                    filenode_id=filenode_id,
                 ).execute().close()
 
             # move temp file to blobs if not exist

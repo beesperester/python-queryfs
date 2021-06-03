@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from queryfs.models.file import File
+from queryfs.models.file import File, fetch_filenode
 from queryfs.core import Core
 
 
@@ -20,15 +20,20 @@ def op_truncate(
     result = core.resolve_path(path)
 
     if isinstance(result, File):
-        blob_path = core.blobs.joinpath(result.hash)
-        temp_path = core.temp.joinpath(original_path)
+        filenode_instance = fetch_filenode(core.session, result)
 
-        if not temp_path.parent.is_dir():
-            os.makedirs(temp_path.parent, exist_ok=True)
+        if filenode_instance:
+            blob_path = core.blobs.joinpath(filenode_instance.hash)
+            temp_path = core.temp.joinpath(original_path)
 
-        shutil.copyfile(blob_path, temp_path)
+            if not temp_path.parent.is_dir():
+                os.makedirs(temp_path.parent, exist_ok=True)
 
-        resolved_path = temp_path
+            shutil.copyfile(blob_path, temp_path)
+
+            resolved_path = temp_path
+        else:
+            raise Exception("Missing Filenode")
     elif isinstance(result, Directory):
         raise FuseOSError(errno.ENOENT)
     else:

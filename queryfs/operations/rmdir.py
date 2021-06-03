@@ -1,5 +1,3 @@
-import os
-
 from queryfs.db.session import Constraint
 from queryfs.models.file import File
 from queryfs.models.directory import Directory

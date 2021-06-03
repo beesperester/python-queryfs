@@ -2,7 +2,7 @@ import os
 import errno
 
 from queryfs.core import Core
-from queryfs.models.file import File
+from queryfs.models.file import File, fetch_filenode
 from queryfs.models.directory import Directory
 from fuse import FuseOSError
 
@@ -11,7 +11,12 @@ def op_access(core: Core, path: str, amode: int) -> None:
     result = core.resolve_path(path)
 
     if isinstance(result, File):
-        resolved_path = core.blobs.joinpath(result.hash)
+        filenode_instance = fetch_filenode(core.session, result)
+
+        if filenode_instance:
+            resolved_path = core.blobs.joinpath(filenode_instance.hash)
+        else:
+            raise Exception("Missing Filenode")
     elif isinstance(result, Directory):
         return
     else:

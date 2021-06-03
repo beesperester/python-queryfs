@@ -3,7 +3,7 @@ import os
 from typing import Dict, Any
 
 from queryfs.core import Core
-from queryfs.models.file import File
+from queryfs.models.file import File, fetch_filenode
 from queryfs.models.directory import Directory
 
 
@@ -11,11 +11,16 @@ def op_statfs(core: Core, path: str) -> Dict[str, Any]:
     result = core.resolve_path(path)
 
     if isinstance(result, File):
-        path_resolved = core.blobs.joinpath(result.hash)
+        filenode_instance = fetch_filenode(core.session, result)
+
+        if filenode_instance:
+            resolved_path = core.blobs.joinpath(filenode_instance.hash)
+        else:
+            raise Exception("Missing Filenode")
     elif isinstance(result, Directory):
-        path_resolved = core.temp
+        resolved_path = core.temp
     else:
-        path_resolved = result
+        resolved_path = result
 
     key_names = [
         "f_bavail",
@@ -30,7 +35,7 @@ def op_statfs(core: Core, path: str) -> Dict[str, Any]:
         "f_namemax",
     ]
 
-    stv = os.statvfs(path_resolved)
+    stv = os.statvfs(resolved_path)
 
     result = {key: getattr(stv, key) for key in key_names}
 

@@ -1,12 +1,17 @@
-from queryfs.models.file import File
 import os
 
 from queryfs.core import Core
 from queryfs.db.session import Constraint
+from queryfs.models.file import File, fetch_filenode
 
 
 def unlink(core: Core, file_instance: File) -> None:
-    hash = file_instance.hash
+    filenode_instance = fetch_filenode(core.session, file_instance)
+
+    if not filenode_instance:
+        raise Exception("Missing Filenode")
+
+    hash = filenode_instance.hash
 
     core.session.query(File).delete().where(
         Constraint("id", "is", file_instance.id)

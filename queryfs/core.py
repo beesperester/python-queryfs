@@ -1,6 +1,7 @@
 import os
 
 from pathlib import Path
+from queryfs.models.filenode import Filenode
 from typing import Optional, Union, List
 
 from queryfs.db.session import Constraint, Session
@@ -46,6 +47,7 @@ class Core:
 
         self.session.create_table(Directory)
         self.session.create_table(File)
+        self.session.create_table(Filenode)
 
         # keep track of writable file handles
         self.writable_file_handles: List[int] = []

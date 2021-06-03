@@ -6,7 +6,7 @@ from fuse import FuseOSError
 
 from queryfs.core import Core
 from queryfs.db.session import Constraint
-from queryfs.models.file import File
+from queryfs.models.file import File, fetch_filenode
 from queryfs.models.directory import Directory
 
 
@@ -16,7 +16,12 @@ def op_open(core: Core, path: str, flags: int) -> int:
     result = core.resolve_path(path)
 
     if isinstance(result, File):
-        resolved_path = core.blobs.joinpath(result.hash)
+        filenode_instance = fetch_filenode(core.session, result)
+
+        if filenode_instance:
+            resolved_path = core.blobs.joinpath(filenode_instance.hash)
+        else:
+            raise Exception("Missing Filenode")
     elif isinstance(result, Directory):
         resolved_path = core.temp
     else:
@@ -55,27 +60,30 @@ def op_open(core: Core, path: str, flags: int) -> int:
     )
 
     if file_instance:
-        if flags == 0:
-            # readable blob file
-            blob_path = core.blobs.joinpath(file_instance.hash)
+        filenode_instance = fetch_filenode(core.session, file_instance)
 
-            fh = os.open(blob_path, flags)
+        if filenode_instance:
+            if flags == 0:
+                # readable blob file
+                blob_path = core.blobs.joinpath(filenode_instance.hash)
 
-            return fh
-        else:
-            # new writable temp file
-            temp_path = core.temp.joinpath(original_path)
+                fh = os.open(blob_path, flags)
 
-            if not temp_path.parent.is_dir():
-                os.makedirs(temp_path.parent, exist_ok=True)
+                return fh
+            else:
+                # new writable temp file
+                temp_path = core.temp.joinpath(original_path)
 
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                if not temp_path.parent.is_dir():
+                    os.makedirs(temp_path.parent, exist_ok=True)
 
-            fh = os.open(temp_path, flags)
+                flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
 
-            if fh not in core.writable_file_handles:
-                core.writable_file_handles.append(fh)
+                fh = os.open(temp_path, flags)
 
-            return fh
-    else:
-        raise FuseOSError(errno.ENOENT)
+                if fh not in core.writable_file_handles:
+                    core.writable_file_handles.append(fh)
+
+                return fh
+
+    raise FuseOSError(errno.ENOENT)
