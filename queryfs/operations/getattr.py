@@ -1,8 +1,13 @@
 import os
+import logging
+
 from typing import Dict, Any, Optional, Union
 
+from queryfs.logging import format_entry
 from queryfs.core import Core
 from queryfs.schemas import File, Directory, Filenode
+
+logger = logging.getLogger("operations")
 
 
 def op_getattr(
@@ -12,6 +17,8 @@ def op_getattr(
     # basename = os.path.basename(original_path)
     result = core.resolve_path(path)
     filenode_instance: Optional[Filenode] = None
+
+    logger.info(format_entry("op_getattr", path=path, fh=fh, resolved=result))
 
     if isinstance(result, File):
         filenode_instance = result.filenode(core.session)

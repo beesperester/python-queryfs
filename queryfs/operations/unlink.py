@@ -1,8 +1,12 @@
 import os
+import logging
 
+from queryfs.logging import format_entry
 from queryfs.core import Core
 from queryfs.db import Constraint
 from queryfs.schemas import File, Filenode
+
+logger = logging.getLogger("operations")
 
 
 def unlink(core: Core, file_instance: File) -> None:
@@ -13,14 +17,11 @@ def unlink(core: Core, file_instance: File) -> None:
 
     hash = filenode_instance.hash
 
-    core.session.query(File).delete().where(
-        Constraint("id", "is", file_instance.id)
-    ).execute().close()
+    # remove file
+    file_instance.delete(core.session)
 
-    # remove related file node
-    core.session.query(Filenode).delete().where(
-        Constraint("id", "is", filenode_instance.id),
-    ).execute().close()
+    # remove related filenode
+    filenode_instance.delete(core.session)
 
     # find all pointers to hash
     # remove blob if no more pointers to blob
@@ -43,7 +44,7 @@ def unlink(core: Core, file_instance: File) -> None:
 def op_unlink(core: Core, path: str) -> None:
     result = core.resolve_path(path)
 
+    logger.info(format_entry("op_unlink", path=path))
+
     if isinstance(result, File):
         unlink(core, result)
-
-        print("unlink", result)

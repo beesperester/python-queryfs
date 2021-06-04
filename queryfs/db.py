@@ -81,6 +81,7 @@ class Schema:
     table_name: str = ""
     fields: OrderedDict[str, str] = OrderedDict()
     relations: Dict[str, Relation] = {}
+    id: int = 0
 
     # object methods
 
@@ -107,12 +108,40 @@ class Schema:
 
         return f"<{self.__class__.__name__} {info} at {hex(id(self))}>"
 
+    @property
+    def is_alive(self) -> bool:
+        return self.id > 0
+
     # data hydration
 
     def hydrate(self, *args: Any) -> None:
         for index, arg in enumerate(args):
             if index < len(self.fields.keys()) and arg is not None:
                 setattr(self, list(self.fields.keys())[index], arg)
+
+    def update(self, session: Session, **kwargs: Any) -> None:
+        if not self.is_alive:
+            raise Exception(
+                f"Object of type '{self.__class__.__name__}' is not alive"
+            )
+
+        session.query(self.__class__).update(**kwargs).where(
+            Constraint("id", "is", self.id)
+        ).execute().close()
+
+        for key, value in kwargs.items():
+            if key in self.fields:
+                setattr(self, key, value)
+
+    def delete(self, session: Session) -> None:
+        if not self.is_alive:
+            raise Exception(
+                f"Object of type '{self.__class__.__name__}' is not alive"
+            )
+
+        session.query(self.__class__).delete().where(
+            Constraint("id", "is", self.id)
+        ).execute().close()
 
 
 class QueryBuilder(Generic[T]):

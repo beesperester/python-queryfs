@@ -1,13 +1,17 @@
 import os
 import errno
+import logging
 
 from pathlib import Path
 import shutil
 from typing import Optional
 from fuse import FuseOSError
 
+from queryfs.logging import format_entry
 from queryfs.core import Core
 from queryfs.schemas import File, Directory, Filenode
+
+logger = logging.getLogger("operations")
 
 
 def op_open(core: Core, path: str, flags: int) -> int:
@@ -15,6 +19,10 @@ def op_open(core: Core, path: str, flags: int) -> int:
     # file_name = os.path.basename(path)
     result = core.resolve_path(path)
     filenode_instance: Optional[Filenode] = None
+
+    logger.info(
+        format_entry("op_open", path=path, flags=flags, resolved=result)
+    )
 
     if isinstance(result, File):
         filenode_instance = result.filenode(core.session)
@@ -37,6 +45,15 @@ def op_open(core: Core, path: str, flags: int) -> int:
             # readable temp file
             fh = os.open(resolved_path, flags)
 
+            logger.info(
+                format_entry(
+                    "op_open",
+                    "opened readable temp file",
+                    path=resolved_path,
+                    fh=fh,
+                )
+            )
+
             return fh
         else:
             if not resolved_path.parent.is_dir():
@@ -49,8 +66,14 @@ def op_open(core: Core, path: str, flags: int) -> int:
             if fh not in core.writable_file_handles:
                 core.writable_file_handles.append(fh)
 
-            print(
-                f"opening '{original_path}' as '{resolved_path}' with flags '{flags}'"
+            logger.info(
+                format_entry(
+                    "op_open",
+                    "opened writable temp file",
+                    path=resolved_path,
+                    flags=flags,
+                    fh=fh,
+                )
             )
 
             return fh
@@ -70,9 +93,17 @@ def op_open(core: Core, path: str, flags: int) -> int:
     if filenode_instance:
         blob_path = core.blobs.joinpath(filenode_instance.hash)
         if flags == 0:
-
             # readable blob file
             fh = os.open(blob_path, flags)
+
+            logger.info(
+                format_entry(
+                    "op_open",
+                    "opened readable blob file",
+                    path=blob_path,
+                    fh=fh,
+                )
+            )
 
             return fh
         else:
@@ -92,8 +123,14 @@ def op_open(core: Core, path: str, flags: int) -> int:
             if fh not in core.writable_file_handles:
                 core.writable_file_handles.append(fh)
 
-            print(
-                f"opening '{original_path}' as '{temp_path}' with flags '{flags}'"
+            logger.info(
+                format_entry(
+                    "op_open",
+                    "opened writable temp file from blob",
+                    path=temp_path,
+                    fh=fh,
+                    blob_path=blob_path,
+                )
             )
 
             return fh

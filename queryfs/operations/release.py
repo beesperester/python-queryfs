@@ -1,19 +1,25 @@
 import os
+import logging
 
 from pathlib import Path
 from typing import Optional
 from time import time
 
+from queryfs.logging import format_entry
 from queryfs.core import Core
 from queryfs.db import Constraint
 from queryfs.schemas import File, Directory, Filenode
 from queryfs.hashing import hash_from_file
+
+logger = logging.getLogger("operations")
 
 
 def op_release(core: Core, path: str, fh: int) -> None:
     original_path = Path(str(path)[1:])
     file_name = os.path.basename(path)
     result = core.resolve_path(path)
+
+    logger.info(format_entry("op_release", path=path, fh=fh, resolved=result))
 
     if isinstance(result, File):
         filenode_instance = result.filenode(core.session)
@@ -35,11 +41,18 @@ def op_release(core: Core, path: str, fh: int) -> None:
         # remove file handle from list of writable file handles
         core.writable_file_handles.remove(fh)
 
+        logger.info(format_entry("op_release", "released", fh=fh))
+
         # create hash from file
         hash = hash_from_file(resolved_path)
 
         if hash != core.empty_hash:
-            print(f"releasing '{original_path}' as '{resolved_path}'")
+            logger.info(
+                format_entry(
+                    "op_release",
+                    f"released '{original_path}' as '{resolved_path}'",
+                )
+            )
 
             ctime = time()
 
@@ -65,8 +78,6 @@ def op_release(core: Core, path: str, fh: int) -> None:
                 .fetch_one()
             )
 
-            print("found file instance", file_instance)
-
             if file_instance:
                 filenode_instance = file_instance.filenode(core.session)
 
@@ -76,13 +87,20 @@ def op_release(core: Core, path: str, fh: int) -> None:
                 # udpate existing file
                 previous_hash = filenode_instance.hash
 
-                core.session.query(Filenode).update(
-                    hash=hash, atime=ctime, mtime=ctime, size=size
-                ).where(
-                    Constraint("id", "is", filenode_instance.id)
-                ).execute().close()
+                filenode_instance.update(
+                    core.session,
+                    hash=hash,
+                    atime=ctime,
+                    mtime=ctime,
+                    size=size,
+                )
 
-                print(f"updated existing filenode '{filenode_instance.id}'")
+                logger.info(
+                    format_entry(
+                        "op_release",
+                        f"updated existing filenode '{filenode_instance}'",
+                    )
+                )
 
                 # remove pointless blobs
                 pointers = (
@@ -94,11 +112,23 @@ def op_release(core: Core, path: str, fh: int) -> None:
                 )
 
                 if not pointers:
-                    print(f"no pointers pointing to blob '{previous_hash}'")
+                    logger.info(
+                        format_entry(
+                            "op_release",
+                            f"no pointers pointing to blob '{previous_hash}'",
+                        )
+                    )
 
                     previous_blob_path = core.blobs.joinpath(previous_hash)
 
                     if previous_blob_path.is_file():
+                        logger.info(
+                            format_entry(
+                                "op_release",
+                                f"removed blob '{previous_blob_path}'",
+                            )
+                        )
+
                         os.unlink(previous_blob_path)
             else:
                 # insert new filenode
@@ -115,7 +145,11 @@ def op_release(core: Core, path: str, fh: int) -> None:
                     .get_last_row_id()
                 )
 
-                print(f"inserted new filenode '{filenode_id}'")
+                logger.info(
+                    format_entry(
+                        "op_release", f"inserted new filenode '{filenode_id}'"
+                    )
+                )
 
                 # insert new file
                 file_id = (
@@ -129,7 +163,11 @@ def op_release(core: Core, path: str, fh: int) -> None:
                     .get_last_row_id()
                 )
 
-                print(f"inserted new file '{file_id}'")
+                logger.info(
+                    format_entry(
+                        "op_release", f"inserted new file '{file_id}'"
+                    )
+                )
 
             # move temp file to blobs if not exist
             blob_path = core.blobs.joinpath(hash)
@@ -137,8 +175,24 @@ def op_release(core: Core, path: str, fh: int) -> None:
             if not blob_path.is_file():
                 # move temp file to blobs
                 # if no blob exists for that hash
+
+                logger.info(
+                    format_entry(
+                        "op_release",
+                        f"moved file from '{resolved_path}' to '{blob_path}'",
+                    )
+                )
+
                 os.rename(resolved_path, blob_path)
             else:
                 # unlink temp file
                 # if a blob exists for that hash
+
+                logger.info(
+                    format_entry(
+                        "op_release",
+                        f"removed file from '{resolved_path}' -> duplicate blob",
+                    )
+                )
+
                 os.unlink(resolved_path)

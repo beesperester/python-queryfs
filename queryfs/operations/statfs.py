@@ -1,13 +1,19 @@
 import os
+import logging
 
 from typing import Dict, Any
 
+from queryfs.logging import format_entry
 from queryfs.core import Core
 from queryfs.schemas import File, Directory
+
+logger = logging.getLogger("operations")
 
 
 def op_statfs(core: Core, path: str) -> Dict[str, Any]:
     result = core.resolve_path(path)
+
+    logger.info(format_entry("op_statfs", path=path, resolved=result))
 
     if isinstance(result, File):
         filenode_instance = result.filenode(core.session)

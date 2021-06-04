@@ -1,14 +1,21 @@
+import logging
+
 from typing import Dict, Optional, Union, List, Tuple
 
+from queryfs.logging import format_entry
 from queryfs.core import Core
 from queryfs.db import Constraint
 from queryfs.schemas import File, Directory
+
+logger = logging.getLogger("operations")
 
 
 def op_readdir(
     core: Core, path: str, fh: Optional[int] = None
 ) -> Union[List[str], List[Tuple[str, Dict[str, int], int]]]:
     result = core.resolve_path(path)
+
+    logger.info(format_entry("op_readdir", path=path, fh=fh, resolved=result))
 
     dirents: List[str] = [".", ".."]
 
@@ -46,5 +53,7 @@ def op_readdir(
         )
 
         dirents += [x.name for x in directory_instances]
+
+    logger.info(format_entry("op_readdir", dirents=dirents))
 
     return dirents

@@ -1,11 +1,15 @@
 import os
 import errno
+import logging
 
 from typing import Optional
 from fuse import FuseOSError
 
+from queryfs.logging import format_entry
 from queryfs.core import Core
 from queryfs.schemas import File, Directory
+
+logger = logging.getLogger("operations")
 
 
 def op_create(
@@ -13,6 +17,10 @@ def op_create(
 ) -> int:
     # file_name = os.path.basename(path)
     result = core.resolve_path(path)
+
+    logger.info(
+        format_entry("op_create", path=path, mode=mode, fi=fi, resolved=result)
+    )
 
     if isinstance(result, File):
         raise FuseOSError(errno.EACCES)
