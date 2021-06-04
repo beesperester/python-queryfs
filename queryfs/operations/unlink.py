@@ -1,21 +1,27 @@
 import os
+from queryfs.models.filenode import Filenode
 
 from queryfs.core import Core
 from queryfs.db.session import Constraint
-from queryfs.models.file import File, fetch_filenode
+from queryfs.models.file import File
 
 
 def unlink(core: Core, file_instance: File) -> None:
-    filenode_instance = fetch_filenode(core.session, file_instance)
+    filenode_instance = file_instance.filenode(core.session)
 
     if not filenode_instance:
-        raise Exception("Missing Filenode")
+        raise Exception(f"Missing Filenode for file '{file_instance.id}'")
 
     hash = filenode_instance.hash
 
     core.session.query(File).delete().where(
         Constraint("id", "is", file_instance.id)
     ).execute().close()
+
+    # remove related file node
+    core.session.query(Filenode).delete().where(
+        Constraint("id", "is", filenode_instance.id)
+    )
 
     # find all pointers to hash
     # remove blob if no more pointers to blob

@@ -1,14 +1,14 @@
 import errno
 import os
+import shutil
 
 from fuse import FuseOSError
 from queryfs.models.directory import Directory
-import shutil
 
 from pathlib import Path
 from typing import Optional
 
-from queryfs.models.file import File, fetch_filenode
+from queryfs.models.file import File
 from queryfs.core import Core
 
 
@@ -19,8 +19,16 @@ def op_truncate(
 
     result = core.resolve_path(path)
 
+    # if fh in core.writable_file_handles:
+    #     # remove file handle from list of writable file handles
+    #     core.writable_file_handles.remove(fh)
+
+    #     print(f"truncate '{original_path}' with fh '{fh}'")
+
+    #     os.truncate(fh, length)
+
     if isinstance(result, File):
-        filenode_instance = fetch_filenode(core.session, result)
+        filenode_instance = result.filenode(core.session)
 
         if filenode_instance:
             blob_path = core.blobs.joinpath(filenode_instance.hash)
@@ -39,4 +47,7 @@ def op_truncate(
     else:
         resolved_path = result
 
-    os.truncate(resolved_path, length)
+    print(f"truncate '{original_path}' as '{resolved_path}' with fh '{fh}'")
+
+    if str(resolved_path).startswith(str(core.temp)):
+        os.truncate(resolved_path, length)

@@ -27,14 +27,11 @@ class File(Schema):
     directory_id: Optional[int] = 0
     filenode_id: int = 0
 
-
-def fetch_filenode(
-    session: Session, file_instance: File
-) -> Optional[Filenode]:
-    return (
-        session.query(Filenode)
-        .select()
-        .where(Constraint("id", "is", file_instance.filenode_id))
-        .execute()
-        .fetch_one()
-    )
+    def filenode(self, session: Session) -> Optional[Filenode]:
+        return (
+            session.query(Filenode)
+            .select()
+            .where(self.get_constraint("filenode"))
+            .execute()
+            .fetch_one()
+        )

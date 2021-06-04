@@ -3,7 +3,7 @@ import os
 from typing import Dict, Any
 
 from queryfs.core import Core
-from queryfs.models.file import File, fetch_filenode
+from queryfs.models.file import File
 from queryfs.models.directory import Directory
 
 
@@ -11,7 +11,7 @@ def op_statfs(core: Core, path: str) -> Dict[str, Any]:
     result = core.resolve_path(path)
 
     if isinstance(result, File):
-        filenode_instance = fetch_filenode(core.session, result)
+        filenode_instance = result.filenode(core.session)
 
         if filenode_instance:
             resolved_path = core.blobs.joinpath(filenode_instance.hash)

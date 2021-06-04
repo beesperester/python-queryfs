@@ -153,11 +153,6 @@ class QueryBuilder(Generic[T]):
 
             return last_row_id
 
-    def constraint_by(self, constraint: Constraint) -> QueryBuilder[T]:
-        self.constraints.append(constraint)
-
-        return self
-
     def select(self, *args: str) -> QueryBuilder[T]:
         fields = list(self.schema.fields.keys())
 
@@ -223,9 +218,6 @@ class QueryBuilder(Generic[T]):
         return self
 
     def where(self, *args: Constraint) -> QueryBuilder[T]:
-        # fields: str = ", ".join([x for x in kwargs.keys()])
-        # values: str = ", ".join(["?" for _ in kwargs.keys()])
-
         self.constraints += args
 
         return self
