@@ -13,13 +13,7 @@ def op_readdir(
     dirents: List[str] = [".", ".."]
 
     if isinstance(result, Directory):
-        file_instances = (
-            core.session.query(File)
-            .select()
-            .where(Constraint("directory_id", "is", result.id))
-            .execute()
-            .fetch_all()
-        )
+        file_instances = result.files(core.session)
 
         dirents += [x.name for x in file_instances]
 

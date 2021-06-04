@@ -19,15 +19,17 @@ def unlink(core: Core, file_instance: File) -> None:
 
     # remove related file node
     core.session.query(Filenode).delete().where(
-        Constraint("id", "is", filenode_instance.id)
-    )
+        Constraint("id", "is", filenode_instance.id),
+    ).execute().close()
 
     # find all pointers to hash
     # remove blob if no more pointers to blob
     pointers = (
-        core.session.query(File)
+        core.session.query(Filenode)
         .select()
-        .where(Constraint("hash", "is", hash))
+        .where(
+            Constraint("hash", "is", hash),
+        )
         .execute()
         .fetch_all()
     )
@@ -43,3 +45,5 @@ def op_unlink(core: Core, path: str) -> None:
 
     if isinstance(result, File):
         unlink(core, result)
+
+        print("unlink", result)

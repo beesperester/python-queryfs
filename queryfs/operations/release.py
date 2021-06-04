@@ -54,22 +54,18 @@ def op_release(core: Core, path: str, fh: int) -> None:
             if directory_instance:
                 directory_id = directory_instance.id
 
-            constraints = [
-                Constraint("name", "=", file_name),
-                Constraint("directory_id", "is", directory_id),
-            ]
-
-            print(constraints)
-
             file_instance = (
                 core.session.query(File)
                 .select()
                 .where(
-                    *constraints,
+                    Constraint("name", "=", file_name),
+                    Constraint("directory_id", "is", directory_id),
                 )
                 .execute()
                 .fetch_one()
             )
+
+            print("found file instance", file_instance)
 
             if file_instance:
                 filenode_instance = file_instance.filenode(core.session)

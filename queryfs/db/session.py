@@ -278,6 +278,8 @@ class QueryBuilder(Generic[T]):
         if self.cursor:
             result = self.cursor.fetchone()
 
+            logger.info(result)
+
             self.close()
 
             if result:
@@ -286,6 +288,8 @@ class QueryBuilder(Generic[T]):
     def fetch_all(self) -> List[T]:
         if self.cursor:
             result = self.cursor.fetchall()
+
+            logger.info(result)
 
             self.close()
 
