@@ -110,6 +110,8 @@ class QueryFS(LoggingMixIn, Operations):
     # file methods
 
     def open(self, path: str, flags: int) -> int:
+        invalidate(self.readdir_cache, os.path.dirname(path))
+
         return operations.op_open(self.core, path, flags)
 
     def create(self, path: str, mode: int, fi: Optional[bool] = None) -> int:
@@ -153,6 +155,7 @@ class QueryFS(LoggingMixIn, Operations):
         return operations.op_fsync(self.core, path, datasync, fh)
 
     def release(self, path: str, fh: int) -> None:
+        invalidate(self.readdir_cache, os.path.dirname(path))
         invalidate(self.getattr_cache, path)
 
         return operations.op_release(self.core, path, fh)

@@ -64,7 +64,7 @@ class Filenode(Schema):
             "atime": "real",
             "mtime": "real",
             "size": "integer",
-            "previous_filenode_id": "integer",
+            "filenode_id": "integer",
         }
     )
 
@@ -74,4 +74,9 @@ class Filenode(Schema):
     atime: float = 0.0
     mtime: float = 0.0
     size: int = 0
-    previous_filenode_id: int = 0
+    filenode_id: int = 0
+
+    def filenode(self, session: Session) -> Optional[Filenode]:
+        return Relation.one_to_one(
+            self, session, Filenode, "filenode_id", "id"
+        )

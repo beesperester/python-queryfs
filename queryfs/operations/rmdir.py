@@ -4,7 +4,7 @@ from queryfs.logging import format_entry
 from queryfs.db import Constraint
 from queryfs.schemas import File, Directory
 from queryfs.core import Core
-from queryfs.operations.unlink import unlink
+from queryfs.repository import unlink_file
 
 logger = logging.getLogger("operations")
 
@@ -32,7 +32,7 @@ def rmdir_recursively(core: Core, directory_instance: Directory) -> None:
     )
 
     for file_instance in file_instances:
-        unlink(core, file_instance)
+        unlink_file(core, file_instance)
 
     # after removing the directory's contents
     # remove the directory itself
