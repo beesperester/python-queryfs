@@ -2,8 +2,7 @@ import os
 import errno
 
 from queryfs.core import Core
-from queryfs.models.file import File
-from queryfs.models.directory import Directory
+from queryfs.schemas import File, Directory
 from fuse import FuseOSError
 
 

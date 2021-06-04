@@ -3,13 +3,11 @@ import errno
 
 from pathlib import Path
 import shutil
-from queryfs.models.filenode import Filenode
 from typing import Optional
 from fuse import FuseOSError
 
 from queryfs.core import Core
-from queryfs.models.file import File
-from queryfs.models.directory import Directory
+from queryfs.schemas import File, Directory, Filenode
 
 
 def op_open(core: Core, path: str, flags: int) -> int:

@@ -2,8 +2,7 @@ from typing import Dict, Optional, Union, List, Tuple
 
 from queryfs.core import Core
 from queryfs.db.session import Constraint
-from queryfs.models.file import File
-from queryfs.models.directory import Directory
+from queryfs.schemas import File, Directory
 
 
 def op_readdir(

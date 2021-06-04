@@ -2,13 +2,11 @@ import os
 
 from pathlib import Path
 from typing import Optional
-from queryfs.models.filenode import Filenode
 from time import time
 
 from queryfs.core import Core
 from queryfs.db.session import Constraint
-from queryfs.models.file import File
-from queryfs.models.directory import Directory
+from queryfs.schemas import File, Directory, Filenode
 from queryfs.hashing import hash_from_file
 
 

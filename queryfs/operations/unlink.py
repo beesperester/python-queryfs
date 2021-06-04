@@ -1,9 +1,8 @@
 import os
-from queryfs.models.filenode import Filenode
 
 from queryfs.core import Core
 from queryfs.db.session import Constraint
-from queryfs.models.file import File
+from queryfs.schemas import File, Filenode
 
 
 def unlink(core: Core, file_instance: File) -> None:

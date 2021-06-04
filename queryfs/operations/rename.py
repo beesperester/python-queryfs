@@ -2,8 +2,7 @@ import os
 
 from queryfs.core import Core
 from queryfs.db.session import Constraint
-from queryfs.models.file import File
-from queryfs.models.directory import Directory
+from queryfs.schemas import File, Directory
 
 
 def op_rename(core: Core, old: str, new: str) -> None:

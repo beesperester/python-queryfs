@@ -1,7 +1,7 @@
 import os
 
 from queryfs.core import Core
-from queryfs.models.directory import Directory
+from queryfs.schemas import Directory
 
 
 def op_mkdir(core: Core, path: str, mode: int) -> None:

@@ -3,13 +3,12 @@ import os
 import shutil
 
 from fuse import FuseOSError
-from queryfs.models.directory import Directory
 
 from pathlib import Path
 from typing import Optional
 
-from queryfs.models.file import File
 from queryfs.core import Core
+from queryfs.schemas import File, Directory
 
 
 def op_truncate(

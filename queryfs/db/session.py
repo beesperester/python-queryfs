@@ -1,10 +1,10 @@
 from __future__ import annotations
+from pathlib import Path
 
 import sqlite3
 import logging
 import os
 
-from functools import reduce
 from contextlib import closing
 from collections import OrderedDict
 from typing import (
@@ -18,10 +18,9 @@ from typing import (
     Dict,
     Union,
 )
-from queryfs import PathLike
 
 T = TypeVar("T", bound="Schema")
-S = TypeVar("S", bound="Schema")
+
 logger = logging.getLogger("db")
 
 
@@ -31,24 +30,6 @@ class NotFoundException(Exception):
 
 class QueryBuilderError(Exception):
     ...
-
-
-# class Statement:
-#     TYPE_KEYWORD: int = 1
-#     TYPE_FILTER: int = 10
-
-#     def __init__(
-#         self,
-#         statement_type: int,
-#         statement: str,
-#         values: Optional[List[Any]] = None,
-#     ) -> None:
-#         if values is None:
-#             values = []
-
-#         self.statement_type = statement_type
-#         self.statement = statement
-#         self.values = values
 
 
 class Constraint:
@@ -62,15 +43,37 @@ class Constraint:
 
 
 class Relation:
-    TYPE_ONE_TO_MANY: str = "one to many"
+    @staticmethod
+    def one_to_many(
+        live_instance: Schema,
+        session: Session,
+        schema: Type[T],
+        own_key: str,
+        other_key: str,
+    ) -> List[T]:
+        constraint = Constraint(
+            other_key, "is", getattr(live_instance, own_key)
+        )
 
-    def __init__(
-        self, schema: Type[T], own_key: str, other_key: str, type: str
-    ) -> None:
-        self.schema = schema
-        self.own_key = own_key
-        self.other_key = other_key
-        self.type = type
+        return (
+            session.query(schema, [constraint]).select().execute().fetch_all()
+        )
+
+    @staticmethod
+    def one_to_one(
+        live_instance: Schema,
+        session: Session,
+        schema: Type[T],
+        own_key: str,
+        other_key: str,
+    ) -> Optional[T]:
+        constraint = Constraint(
+            other_key, "is", getattr(live_instance, own_key)
+        )
+
+        return (
+            session.query(schema, [constraint]).select().execute().fetch_one()
+        )
 
 
 class Schema:
@@ -110,18 +113,6 @@ class Schema:
         for index, arg in enumerate(args):
             if index < len(self.fields.keys()) and arg is not None:
                 setattr(self, list(self.fields.keys())[index], arg)
-
-    def get_constraint(self, name: str) -> Constraint:
-        relation = self.relations.get(name)
-
-        if relation:
-            return Constraint(
-                relation.other_key, "is", getattr(self, relation.own_key)
-            )
-
-        raise QueryBuilderError(
-            f"Unable to find relation '{name}' in schema '{self.__class__.__name__}'"
-        )
 
 
 class QueryBuilder(Generic[T]):
@@ -304,11 +295,13 @@ class QueryBuilder(Generic[T]):
 
 
 class Session:
-    def __init__(self, db_name: PathLike) -> None:
+    def __init__(self, db_name: Path) -> None:
         self.db_name = db_name
 
-    def query(self, schema: Type[T]) -> QueryBuilder[T]:
-        return QueryBuilder(self, schema)
+    def query(
+        self, schema: Type[T], constraints: Optional[List[Constraint]] = None
+    ) -> QueryBuilder[T]:
+        return QueryBuilder(self, schema, constraints)
 
     def connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_name)
@@ -339,12 +332,6 @@ class Session:
                     for key, value in schema.fields.items()
                 ]
 
-                # if schema.relations:
-                #     for _, relation in schema.relations.items():
-                #         fields.append(
-                #             f"FOREIGN KEY ({relation.own_key}) REFERENCES {relation.schema.table_name}"
-                #         )
-
                 fields_string = ", ".join(fields)
 
                 create_table_query: Tuple[str, List[Any]] = (
@@ -369,7 +356,7 @@ if __name__ == "__main__":
     if os.path.isfile("test.db"):
         os.unlink("test.db")
 
-    session = Session("test.db")
+    session = Session(Path("test.db"))
 
     session.create_table(Test)
 

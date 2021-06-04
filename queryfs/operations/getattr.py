@@ -2,9 +2,7 @@ import os
 from typing import Dict, Any, Optional, Union
 
 from queryfs.core import Core
-from queryfs.models.file import File
-from queryfs.models.directory import Directory
-from queryfs.models.filenode import Filenode
+from queryfs.schemas import File, Directory, Filenode
 
 
 def op_getattr(

@@ -3,8 +3,7 @@ import os
 from typing import Dict, Any
 
 from queryfs.core import Core
-from queryfs.models.file import File
-from queryfs.models.directory import Directory
+from queryfs.schemas import File, Directory
 
 
 def op_statfs(core: Core, path: str) -> Dict[str, Any]:

@@ -1,12 +1,10 @@
 import os
 
 from pathlib import Path
-from queryfs.models.filenode import Filenode
 from typing import Optional, Union, List
 
 from queryfs.db.session import Constraint, Session
-from queryfs.models.file import File
-from queryfs.models.directory import Directory
+from queryfs.schemas import File, Directory, Filenode
 from queryfs.hashing import hash_from_bytes
 
 
