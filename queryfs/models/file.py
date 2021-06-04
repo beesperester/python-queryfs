@@ -1,8 +1,7 @@
 from collections import OrderedDict
 from typing import Optional
 
-from queryfs.db.schema import Schema
-from queryfs.db.session import Session
+from queryfs.db.session import Session, Relation, Schema
 from queryfs.models.filenode import Filenode
 from queryfs.db.session import Constraint
 
@@ -17,6 +16,11 @@ class File(Schema):
             "filenode_id": "integer",
         }
     )
+    relations = {
+        "filenode": Relation(
+            Filenode, "filenode_id", "id", Relation.TYPE_ONE_TO_MANY
+        )
+    }
 
     id: int = 0
     name: str = ""

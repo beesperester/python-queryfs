@@ -7,11 +7,21 @@ import os
 from functools import reduce
 from contextlib import closing
 from collections import OrderedDict
-from typing import Generic, List, Any, Optional, Tuple, Type, TypeVar, Dict
+from typing import (
+    Generic,
+    List,
+    Any,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Dict,
+    Union,
+)
 from queryfs import PathLike
-from queryfs.db.schema import Schema
 
 T = TypeVar("T", bound="Schema")
+S = TypeVar("S", bound="Schema")
 logger = logging.getLogger("db")
 
 
@@ -23,22 +33,22 @@ class QueryBuilderError(Exception):
     ...
 
 
-class Statement:
-    TYPE_KEYWORD: int = 1
-    TYPE_FILTER: int = 10
+# class Statement:
+#     TYPE_KEYWORD: int = 1
+#     TYPE_FILTER: int = 10
 
-    def __init__(
-        self,
-        statement_type: int,
-        statement: str,
-        values: Optional[List[Any]] = None,
-    ) -> None:
-        if values is None:
-            values = []
+#     def __init__(
+#         self,
+#         statement_type: int,
+#         statement: str,
+#         values: Optional[List[Any]] = None,
+#     ) -> None:
+#         if values is None:
+#             values = []
 
-        self.statement_type = statement_type
-        self.statement = statement
-        self.values = values
+#         self.statement_type = statement_type
+#         self.statement = statement
+#         self.values = values
 
 
 class Constraint:
@@ -47,17 +57,92 @@ class Constraint:
         self.type = type
         self.value = value
 
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} field='{self.field}' type='{self.type}' value='{self.value}' at {hex(id(self))}>"
+
+
+class Relation:
+    TYPE_ONE_TO_MANY: str = "one to many"
+
+    def __init__(
+        self, schema: Type[T], own_key: str, other_key: str, type: str
+    ) -> None:
+        self.schema = schema
+        self.own_key = own_key
+        self.other_key = other_key
+        self.type = type
+
+
+class Schema:
+    # db specific attributes
+    table_name: str = ""
+    fields: OrderedDict[str, str] = OrderedDict()
+    relations: Dict[str, Relation] = {}
+
+    # object methods
+
+    def __init__(self, *args: Any) -> None:
+        for key, value in self.fields.items():
+            if value.lower().startswith("text"):
+                setattr(self, key, "")
+            elif value.lower().startswith("integer"):
+                setattr(self, key, 0)
+            elif value.lower().startswith("real"):
+                setattr(self, key, 0.0)
+
+            if "null" in value.lower():
+                setattr(self, key, None)
+
+        self.hydrate(*args)
+
+    def __repr__(self) -> str:
+        fields = list(self.fields.keys())
+
+        info = " ".join(
+            [f"{x}='{getattr(self, x)}'" for x in fields if hasattr(self, x)]
+        )
+
+        return f"<{self.__class__.__name__} {info} at {hex(id(self))}>"
+
+    # data hydration
+
+    def hydrate(self, *args: Any) -> None:
+        for index, arg in enumerate(args):
+            if index < len(self.fields.keys()) and arg is not None:
+                setattr(self, list(self.fields.keys())[index], arg)
+
+    def get_constraint(self, name: str) -> Constraint:
+        relation = self.relations.get(name)
+
+        if relation:
+            return Constraint(
+                relation.other_key, "is", getattr(self, relation.own_key)
+            )
+
+        raise QueryBuilderError(
+            f"Unable to find relation '{name}' in schema '{self.__class__.__name__}'"
+        )
+
 
 class QueryBuilder(Generic[T]):
     def __init__(
         self,
         session: Session,
         schema: Type[T],
+        constraints: Optional[List[Constraint]] = None,
     ) -> None:
+        if constraints is None:
+            constraints = []
+
         self.session = session
         self.schema = schema
+        self.constraints = constraints
 
-        self.query: List[Statement] = []
+        self.statement: Optional[
+            Tuple[str, List[Union[str, int, float]]]
+        ] = None
+
+        # self.query: List[Statement] = []
         self.cursor: Optional[sqlite3.Cursor] = None
 
     def get_last_row_id(self) -> Optional[int]:
@@ -68,38 +153,39 @@ class QueryBuilder(Generic[T]):
 
             return last_row_id
 
+    def constraint_by(self, constraint: Constraint) -> QueryBuilder[T]:
+        self.constraints.append(constraint)
+
+        return self
+
     def select(self, *args: str) -> QueryBuilder[T]:
         fields = list(self.schema.fields.keys())
 
         if args:
             fields = [field for field in args if field in fields]
 
-        self.query.append(
-            Statement(
-                Statement.TYPE_KEYWORD,
-                " ".join(
-                    [
-                        "SELECT",
-                        ", ".join(fields),
-                        "FROM",
-                        self.schema.table_name,
-                    ]
-                ),
-            )
+        self.statement = (
+            " ".join(
+                [
+                    "SELECT",
+                    ", ".join(fields),
+                    "FROM",
+                    self.schema.table_name,
+                ]
+            ),
+            [],
         )
 
         return self
 
     def delete(self) -> QueryBuilder[T]:
-        self.query.append(
-            Statement(
-                Statement.TYPE_KEYWORD,
-                " ".join(
-                    [
-                        f"DELETE FROM {self.schema.table_name}",
-                    ]
-                ),
-            )
+        self.statement = (
+            " ".join(
+                [
+                    f"DELETE FROM {self.schema.table_name}",
+                ]
+            ),
+            [],
         )
 
         return self
@@ -108,17 +194,14 @@ class QueryBuilder(Generic[T]):
         fields: str = ", ".join([x for x in kwargs.keys()])
         values: str = ", ".join(["?" for _ in kwargs.keys()])
 
-        self.query.append(
-            Statement(
-                Statement.TYPE_KEYWORD,
-                " ".join(
-                    [
-                        f"INSERT INTO {self.schema.table_name}",
-                        f"({fields}) VALUES ({values})",
-                    ]
-                ),
-                list(kwargs.values()),
-            )
+        self.statement = (
+            " ".join(
+                [
+                    f"INSERT INTO {self.schema.table_name}",
+                    f"({fields}) VALUES ({values})",
+                ]
+            ),
+            list(kwargs.values()),
         )
 
         return self
@@ -127,17 +210,14 @@ class QueryBuilder(Generic[T]):
         fields: str = ", ".join([x for x in kwargs.keys()])
         values: str = ", ".join(["?" for _ in kwargs.keys()])
 
-        self.query.append(
-            Statement(
-                Statement.TYPE_KEYWORD,
-                " ".join(
-                    [
-                        f"UPDATE {self.schema.table_name}",
-                        f"SET ({fields}) = ({values})",
-                    ]
-                ),
-                list(kwargs.values()),
-            )
+        self.statement = (
+            " ".join(
+                [
+                    f"UPDATE {self.schema.table_name}",
+                    f"SET ({fields}) = ({values})",
+                ]
+            ),
+            list(kwargs.values()),
         )
 
         return self
@@ -146,66 +226,48 @@ class QueryBuilder(Generic[T]):
         # fields: str = ", ".join([x for x in kwargs.keys()])
         # values: str = ", ".join(["?" for _ in kwargs.keys()])
 
-        constraints_grouped: Dict[str, List[Constraint]] = {}
-
-        for constraint in args:
-            group = constraints_grouped.setdefault(constraint.type, [])
-
-            group.append(constraint)
-
-        constraint_strings: List[str] = []
-
-        values: List[Any] = []
-
-        for constraint_type, constraints in constraints_grouped.items():
-            fields_string: str = ", ".join([x.field for x in constraints])
-            values_string: str = ", ".join(["?" for _ in constraints])
-
-            constraint_strings.append(
-                f"({fields_string}) {constraint_type} ({values_string})"
-            )
-            values += [x.value for x in constraints]
-
-        constraint_string = " AND ".join(constraint_strings)
-
-        self.query.append(
-            Statement(
-                Statement.TYPE_FILTER,
-                " ".join(["WHERE", constraint_string]),
-                values,
-            )
-        )
+        self.constraints += args
 
         return self
 
-    def build(self) -> Tuple[str, List[Any]]:
-        def values_reducer(a: List[Any], b: Statement) -> List[Any]:
-            return a + b.values
+    def build(self) -> Tuple[str, List[Union[str, int, float]]]:
+        if self.statement:
+            query_string, query_values = self.statement
 
-        # filter statements
-        statements_filtered: List[Statement] = []
+            if self.constraints:
+                constraints_grouped: Dict[str, List[Constraint]] = {}
 
-        for statement in self.query:
-            statement_types = [x.statement_type for x in statements_filtered]
+                for constraint in self.constraints:
+                    group = constraints_grouped.setdefault(constraint.type, [])
 
-            if statement.statement_type not in statement_types:
-                statements_filtered.append(statement)
-            else:
-                raise QueryBuilderError(
-                    f"Duplicate statement of type {statement.statement_type}"
-                )
+                    group.append(constraint)
 
-        statements_sorted = sorted(
-            statements_filtered, key=lambda x: x.statement_type
-        )
-        initial_values: List[Any] = []
+                constraint_strings: List[str] = []
 
-        query_string = " ".join([x.statement for x in statements_sorted])
-        query_values = reduce(
-            values_reducer, statements_sorted, initial_values
-        )
+                values: List[Any] = []
 
-        return (query_string, query_values)
+                for (
+                    constraint_type,
+                    constraints,
+                ) in constraints_grouped.items():
+                    fields_string: str = ", ".join(
+                        [x.field for x in constraints]
+                    )
+                    values_string: str = ", ".join(["?" for _ in constraints])
+
+                    constraint_strings.append(
+                        f"({fields_string}) {constraint_type} ({values_string})"
+                    )
+                    values += [x.value for x in constraints]
+
+                constraint_string = " AND ".join(constraint_strings)
+
+                query_string += " WHERE " + constraint_string
+                query_values += values
+
+            return (query_string, query_values)
+
+        raise QueryBuilderError("Missing statement")
 
     def execute(self) -> QueryBuilder[T]:
         with self.session.connect() as connection:
@@ -321,36 +383,40 @@ if __name__ == "__main__":
 
     # test insertion
     last_row_id = (
-        session.query(Test).insert(name="hello").execute().get_last_row_id()
+        session.query(Test).insert(name="foo").execute().get_last_row_id()
     )
 
     print(last_row_id)
 
-    session.query(Test).delete().where(
-        Constraint("name", "=", "hello"), Constraint("id", "is", 1)
-    ).execute().close()
-
     # test fetch one
-    # test = (
-    #     session.query(Test)
-    #     .select("id", "name")
-    #     .where(name="foo")
-    #     .execute()
-    #     .fetch_one()
-    # )
+    test = (
+        session.query(Test)
+        .select("id", "name")
+        .where(Constraint("name", "=", "foo"))
+        .execute()
+        .fetch_one()
+    )
 
-    # if test:
-    #     print(test)
+    if test:
+        print(test)
 
     # test fetch all
-    # test = session.query(Test).select().execute().fetch_all()
+    test = session.query(Test).select().execute().fetch_all()
 
-    # print(test)
+    print(test)
 
     # test update
-    # test = (
-    #     session.query(Test).update(name="qwert").where(id=1).execute().close()
-    # )
+    test = (
+        session.query(Test)
+        .update(name="bar")
+        .where(Constraint("id", "is", 1))
+        .execute()
+        .close()
+    )
+
+    session.query(Test).delete().where(
+        Constraint("id", "is", 1)
+    ).execute().close()
 
     # query.create_table()
 

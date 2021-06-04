@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from queryfs.db.schema import Schema
+from queryfs.db.session import Schema
 
 
 class Filenode(Schema):

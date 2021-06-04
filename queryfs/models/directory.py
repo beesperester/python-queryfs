@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from typing import Optional
-from queryfs.db.schema import Schema
+from queryfs.db.session import Schema
 
 
 class Directory(Schema):
