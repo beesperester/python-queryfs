@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 
-
 from collections import OrderedDict
 from typing import List, Optional, TypeVar
 
-from queryfs.db.session import Schema, Session, Relation
+from queryfs.db import Schema, Session, Relation
 
 T = TypeVar("T", bound="Schema")
 

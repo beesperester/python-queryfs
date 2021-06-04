@@ -1,4 +1,4 @@
-from queryfs.db.session import Constraint
+from queryfs.db import Constraint
 from queryfs.schemas import File, Directory
 from queryfs.core import Core
 from queryfs.operations.unlink import unlink

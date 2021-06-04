@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Optional, Union, List
 
-from queryfs.db.session import Constraint, Session
+from queryfs.db import Constraint, Session
 from queryfs.schemas import File, Directory, Filenode
 from queryfs.hashing import hash_from_bytes
 

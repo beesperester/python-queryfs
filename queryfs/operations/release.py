@@ -5,7 +5,7 @@ from typing import Optional
 from time import time
 
 from queryfs.core import Core
-from queryfs.db.session import Constraint
+from queryfs.db import Constraint
 from queryfs.schemas import File, Directory, Filenode
 from queryfs.hashing import hash_from_file
 
