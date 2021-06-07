@@ -27,7 +27,7 @@ def invalidate(cache: Dict[str, Any], path: str) -> None:
         del cache[path]
 
 
-class QueryFS(LoggingMixIn, Operations):
+class QueryFS(Operations):
     def __init__(self, repository_path: Path) -> None:
         self.core = Core(repository_path)
 
