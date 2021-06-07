@@ -26,7 +26,7 @@ def invalidate(cache: Dict[str, Any], path: str) -> None:
         del cache[path]
 
 
-class QueryFS(Operations):
+class BlobFS(Operations):
     def __init__(self, repository_path: Path) -> None:
         self.repository = Repository(repository_path)
 
