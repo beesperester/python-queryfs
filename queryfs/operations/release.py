@@ -6,7 +6,7 @@ from typing import Optional
 from time import time
 
 from queryfs.logging import format_entry
-from queryfs.core import Core
+from queryfs.repository import Repository
 from queryfs.db import Constraint
 from queryfs.schemas import File, Directory, Filenode
 from queryfs.hashing import hash_from_file
@@ -14,18 +14,18 @@ from queryfs.hashing import hash_from_file
 logger = logging.getLogger("operations")
 
 
-def op_release(core: Core, path: str, fh: int) -> None:
+def op_release(repository: Repository, path: str, fh: int) -> None:
     original_path = Path(str(path)[1:])
     file_name = os.path.basename(path)
-    result = core.resolve_path(path)
+    result = repository.resolve_path(path)
 
     logger.info(format_entry("op_release", path=path, fh=fh, resolved=result))
 
     if isinstance(result, File):
-        filenode_instance = result.filenode(core.session)
+        filenode_instance = result.filenode(repository.session)
 
         if filenode_instance:
-            resolved_path = core.blobs.joinpath(filenode_instance.hash)
+            resolved_path = repository.blobs.joinpath(filenode_instance.hash)
         else:
             raise Exception(
                 f"Missing Filenode for file '{result.id}' at '{original_path}'"
@@ -37,16 +37,16 @@ def op_release(core: Core, path: str, fh: int) -> None:
 
     os.close(fh)
 
-    if fh in core.writable_file_handles:
+    if fh in repository.writable_file_handles:
         # remove file handle from list of writable file handles
-        core.writable_file_handles.remove(fh)
+        repository.writable_file_handles.remove(fh)
 
         logger.info(format_entry("op_release", "released", fh=fh))
 
         # create hash from file
         hash = hash_from_file(resolved_path)
 
-        if hash != core.empty_hash:
+        if hash != repository.empty_hash:
             logger.info(
                 format_entry(
                     "op_release",
@@ -60,7 +60,7 @@ def op_release(core: Core, path: str, fh: int) -> None:
 
             directory_id: Optional[int] = None
 
-            directory_instance = core.resolve_db_entity(
+            directory_instance = repository.resolve_db_entity(
                 str(original_path.parent)
             )
 
@@ -68,7 +68,7 @@ def op_release(core: Core, path: str, fh: int) -> None:
                 directory_id = directory_instance.id
 
             file_instance = (
-                core.session.query(File)
+                repository.session.query(File)
                 .select()
                 .where(
                     Constraint("name", "=", file_name),
@@ -79,7 +79,7 @@ def op_release(core: Core, path: str, fh: int) -> None:
             )
 
             if file_instance:
-                filenode_instance = file_instance.filenode(core.session)
+                filenode_instance = file_instance.filenode(repository.session)
 
                 if not filenode_instance:
                     raise Exception("Missing Filenode")
@@ -88,7 +88,7 @@ def op_release(core: Core, path: str, fh: int) -> None:
                 previous_hash = filenode_instance.hash
 
                 filenode_instance.update(
-                    core.session,
+                    repository.session,
                     hash=hash,
                     atime=ctime,
                     mtime=ctime,
@@ -104,7 +104,7 @@ def op_release(core: Core, path: str, fh: int) -> None:
 
                 # remove pointless blobs
                 pointers = (
-                    core.session.query(Filenode)
+                    repository.session.query(Filenode)
                     .select("id")
                     .where(Constraint("hash", "=", previous_hash))
                     .execute()
@@ -119,7 +119,9 @@ def op_release(core: Core, path: str, fh: int) -> None:
                         )
                     )
 
-                    previous_blob_path = core.blobs.joinpath(previous_hash)
+                    previous_blob_path = repository.blobs.joinpath(
+                        previous_hash
+                    )
 
                     if previous_blob_path.is_file():
                         logger.info(
@@ -133,7 +135,7 @@ def op_release(core: Core, path: str, fh: int) -> None:
             else:
                 # insert new filenode
                 filenode_id = (
-                    core.session.query(Filenode)
+                    repository.session.query(Filenode)
                     .insert(
                         hash=hash,
                         ctime=ctime,
@@ -153,7 +155,7 @@ def op_release(core: Core, path: str, fh: int) -> None:
 
                 # insert new file
                 file_id = (
-                    core.session.query(File)
+                    repository.session.query(File)
                     .insert(
                         name=file_name,
                         directory_id=directory_id,
@@ -170,7 +172,7 @@ def op_release(core: Core, path: str, fh: int) -> None:
                 )
 
             # move temp file to blobs if not exist
-            blob_path = core.blobs.joinpath(hash)
+            blob_path = repository.blobs.joinpath(hash)
 
             if not blob_path.is_file():
                 # move temp file to blobs

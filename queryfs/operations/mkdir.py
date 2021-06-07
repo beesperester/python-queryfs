@@ -2,15 +2,15 @@ import os
 import logging
 
 from queryfs.logging import format_entry
-from queryfs.core import Core
+from queryfs.repository import Repository
 from queryfs.schemas import Directory
 
 logger = logging.getLogger("operations")
 
 
-def op_mkdir(core: Core, path: str, mode: int) -> None:
+def op_mkdir(repository: Repository, path: str, mode: int) -> None:
     directory_name = os.path.basename(path)
-    result = core.resolve_path(os.path.dirname(path))
+    result = repository.resolve_path(os.path.dirname(path))
     parent_directory_id = None
 
     logger.info(
@@ -20,6 +20,6 @@ def op_mkdir(core: Core, path: str, mode: int) -> None:
     if isinstance(result, Directory):
         parent_directory_id = result.id
 
-    core.session.query(Directory).insert(
+    repository.session.query(Directory).insert(
         name=directory_name, directory_id=parent_directory_id
     ).execute().close()

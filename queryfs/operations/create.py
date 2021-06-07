@@ -6,17 +6,17 @@ from typing import Optional
 from fuse import FuseOSError
 
 from queryfs.logging import format_entry
-from queryfs.core import Core
+from queryfs.repository import Repository
 from queryfs.schemas import File, Directory
 
 logger = logging.getLogger("operations")
 
 
 def op_create(
-    core: Core, path: str, mode: int, fi: Optional[bool] = None
+    repository: Repository, path: str, mode: int, fi: Optional[bool] = None
 ) -> int:
     # file_name = os.path.basename(path)
-    result = core.resolve_path(path)
+    result = repository.resolve_path(path)
 
     logger.info(
         format_entry("op_create", path=path, mode=mode, fi=fi, resolved=result)
@@ -36,7 +36,7 @@ def op_create(
 
     fh = os.open(resolved_path, flags, mode)
 
-    if fh not in core.writable_file_handles:
-        core.writable_file_handles.append(fh)
+    if fh not in repository.writable_file_handles:
+        repository.writable_file_handles.append(fh)
 
     return fh

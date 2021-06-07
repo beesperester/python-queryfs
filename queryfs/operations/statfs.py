@@ -4,26 +4,26 @@ import logging
 from typing import Dict, Any
 
 from queryfs.logging import format_entry
-from queryfs.core import Core
+from queryfs.repository import Repository
 from queryfs.schemas import File, Directory
 
 logger = logging.getLogger("operations")
 
 
-def op_statfs(core: Core, path: str) -> Dict[str, Any]:
-    result = core.resolve_path(path)
+def op_statfs(repository: Repository, path: str) -> Dict[str, Any]:
+    result = repository.resolve_path(path)
 
     logger.info(format_entry("op_statfs", path=path, resolved=result))
 
     if isinstance(result, File):
-        filenode_instance = result.filenode(core.session)
+        filenode_instance = result.filenode(repository.session)
 
         if filenode_instance:
-            resolved_path = core.blobs.joinpath(filenode_instance.hash)
+            resolved_path = repository.blobs.joinpath(filenode_instance.hash)
         else:
             raise Exception("Missing Filenode")
     elif isinstance(result, Directory):
-        resolved_path = core.temp
+        resolved_path = repository.temp
     else:
         resolved_path = result
 

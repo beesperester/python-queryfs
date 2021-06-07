@@ -2,12 +2,14 @@ import os
 import logging
 
 from queryfs.logging import format_entry
-from queryfs.core import Core
+from queryfs.repository import Repository
 
 logger = logging.getLogger("operations")
 
 
-def op_read(core: Core, path: str, size: int, offset: int, fh: int) -> bytes:
+def op_read(
+    repository: Repository, path: str, size: int, offset: int, fh: int
+) -> bytes:
     os.lseek(fh, offset, 0)
 
     logger.info(

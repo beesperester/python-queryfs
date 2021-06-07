@@ -4,15 +4,15 @@ import logging
 from typing import Optional
 
 from queryfs.logging import format_entry
-from queryfs.core import Core
+from queryfs.repository import Repository
 
 logger = logging.getLogger("operations")
 
 
 def op_truncate(
-    core: Core, path: str, length: int, fh: Optional[int] = None
+    repository: Repository, path: str, length: int, fh: Optional[int] = None
 ) -> None:
-    result = core.resolve_path(path)
+    result = repository.resolve_path(path)
 
     logger.info(
         format_entry(
@@ -20,7 +20,7 @@ def op_truncate(
         )
     )
 
-    if fh in core.writable_file_handles:
+    if fh in repository.writable_file_handles:
         os.truncate(fh, length)
     else:
         logger.warning(
